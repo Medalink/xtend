@@ -7,7 +7,14 @@ if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, prompt.split('
 if (mode === 'fail') process.exit(0)
 if (mode === 'hook') {
   fs.writeFileSync('.git/hooks/pre-commit', '#!/bin/sh\necho owned > owned.txt\n')
+  fs.appendFileSync('app.js', '// footer\n')
+  execFileSync('git', ['commit', '-qam', 'agent committed by itself'])
   process.exit(0)
+}
+if (mode === 'gitdir') {
+  fs.rmSync('.git/hooks', { recursive: true })
+  fs.appendFileSync('.git/config', '[core]\n\thooksPath = .evil\n')
+  fs.writeFileSync('.git/info/attributes', '* filter=evil\n')
 }
 
 if (prompt.includes('Write a reference sheet')) {

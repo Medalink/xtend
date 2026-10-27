@@ -12,7 +12,7 @@ const OWNER_SHEET = 'XTEND.md'
 const TRIES = 3
 
 const AGENTS = {
-  claude: 'claude -p --permission-mode acceptEdits --allowedTools "Bash(git rm *),Bash(git mv *)"',
+  claude: 'claude -p --allowedTools "Edit,Write,Bash(git rm *),Bash(git mv *)"',
   codex: 'codex exec -s workspace-write -',
 }
 
@@ -29,6 +29,14 @@ Owners: run \`xtend sheet\` in your repo and commit XTEND.md. Nothing else is ne
 Its \`contributions:\` line (pr, issue or none) decides what forks may send back.`
 
 class Fail extends Error {}
+
+// Hooks would run code an agent planted inside xtend's own git commands, so every git that xtend starts runs without them. Your check is the gate.
+const configs = Number(process.env.GIT_CONFIG_COUNT || 0)
+Object.assign(process.env, {
+  GIT_CONFIG_COUNT: String(configs + 1),
+  [`GIT_CONFIG_KEY_${configs}`]: 'core.hooksPath',
+  [`GIT_CONFIG_VALUE_${configs}`]: process.platform === 'win32' ? 'NUL' : '/dev/null',
+})
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 << 20, ...opts })
@@ -78,18 +86,30 @@ function pushIfFork() {
   process.exitCode = 1
 }
 
-// git runs hooks and reads config on our next command, so an agent must not be able to change them.
+// Git config, attributes and hooks steer every later git command, xtend's and yours, so an agent must not change them.
 function gitSnapshot() {
-  const dir = git('rev-parse', '--git-common-dir')
-  const list = () => ['config', ...fs.readdirSync(path.join(dir, 'hooks'), { withFileTypes: true }).filter((e) => e.isFile()).map((e) => `hooks/${e.name}`)]
-  const files = new Map(list().map((f) => [f, fs.readFileSync(path.join(dir, f))]))
+  const hooks = path.join(git('rev-parse', '--git-common-dir'), 'hooks')
+  const fixed = ['config', 'config.worktree', 'info/attributes'].map((f) => git('rev-parse', '--git-path', f))
+  const hookEntries = () => (fs.existsSync(hooks) ? fs.readdirSync(hooks).map((f) => path.join(hooks, f)) : [])
+  const read = (p) => {
+    const s = fs.lstatSync(p, { throwIfNoEntry: false })
+    return !s ? null : s.isFile() ? fs.readFileSync(p) : `${s.isSymbolicLink() ? 'link' : 'dir'}:${s.isSymbolicLink() ? fs.readlinkSync(p) : ''}`
+  }
+  const same = (a, b) => (Buffer.isBuffer(a) && Buffer.isBuffer(b) ? a.equals(b) : a === b)
+  const saved = new Map([...fixed, ...hookEntries()].map((p) => [p, read(p)]))
   return () => {
     let changed = false
-    for (const f of list()) if (!files.has(f)) { fs.rmSync(path.join(dir, f)); changed = true }
-    for (const [f, buf] of files) {
-      const p = path.join(dir, f)
-      if (!fs.existsSync(p) || !fs.readFileSync(p).equals(buf)) { fs.writeFileSync(p, buf); changed = true }
-    }
+    try {
+      for (const p of hookEntries()) if (!saved.has(p)) { fs.rmSync(p, { recursive: true, force: true }); changed = true }
+      for (const [p, was] of saved) {
+        const now = read(p)
+        if (same(now, was)) continue
+        changed = true
+        if (!Buffer.isBuffer(was) && was !== null) continue
+        fs.rmSync(p, { recursive: true, force: true })
+        if (was) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, was) }
+      }
+    } catch { changed = true }
     return changed
   }
 }
@@ -101,7 +121,7 @@ function agentUntil(cfg, prompt, verify) {
     log(`asking agent (${cfg.agent.split(' ')[0]}), try ${i}/${TRIES}`)
     const restoreGit = gitSnapshot()
     const r = shell(cfg.agent, problem ? `${prompt}\n\n## Your last attempt failed this check\n${problem}` : prompt)
-    if (restoreGit()) return { problem: 'the agent changed .git/config or .git/hooks; xtend restored them and stopped' }
+    if (restoreGit()) return { problem: 'the agent changed git config, attributes or hooks; xtend restored them and stopped' }
     if (!r.ok) return { problem: 'agent exited with an error', summary: r.out }
     problem = verify()
     if (!problem) return { problem: null, summary: r.out }
@@ -119,7 +139,7 @@ function check(cfg) {
 function markersLeft(conflicted) {
   const left = [
     run('git', ['grep', '--cached', '-lE', '^(<<<<<<<|>>>>>>>) ']).out,
-    conflicted && run('git', ['grep', '--cached', '-lE', '^=======.?$', '--', ...conflicted.split('\n')]).out,
+    conflicted && run('git', ['grep', '--cached', '-lE', '^=======[[:space:]]*$', '--', ...conflicted.split('\n')]).out,
   ].filter(Boolean).join('\n')
   return left ? `conflict markers left in:\n${left}` : null
 }
@@ -230,6 +250,7 @@ Finish with a short plain-text summary of what you changed and why.`
     return git('diff', '--cached', '--name-only') ? check(cfg) : 'no files changed'
   })
   if (r.problem) {
+    if (git('rev-parse', 'HEAD') !== before) git('reset', '-q', '--soft', before)
     log(`change not committed: ${r.problem}\nThe agent's edits are left in your working tree.`)
     process.exitCode = 1
     return
@@ -246,7 +267,10 @@ function sync(cfg) {
   if (!tryGit('remote', 'get-url', 'upstream')) git('remote', 'add', 'upstream', cfg.upstream)
   git('fetch', '-q', 'upstream', cfg.branch)
   const theirs = `upstream/${cfg.branch}`
-  if (tryGit('merge-base', '--is-ancestor', theirs, 'HEAD')) return log('already up to date')
+  if (tryGit('merge-base', '--is-ancestor', theirs, 'HEAD')) {
+    log('already up to date')
+    return pushIfFork()
+  }
 
   const before = git('rev-parse', 'HEAD')
   const incoming = git('log', '--no-merges', '--format=- %s', `HEAD..${theirs}`)
@@ -260,9 +284,28 @@ function sync(cfg) {
     return markersLeft(conflicted) || check(cfg)
   }
 
-  let problem = conflicted ? `conflicts in:\n${conflicted}` : verify()
+  let problem
+  try {
+    problem = conflicted ? `conflicts in:\n${conflicted}` : verify()
+    if (problem) problem = resolveMerge(cfg, { ours, incoming, problem }, verify)
+    if (!problem) {
+      const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
+      if (!c.ok) problem = `git commit failed:\n${c.err || c.out}`
+    }
+  } catch (e) {
+    problem = e.message
+  }
   if (problem) {
-    const prompt = `# Ref sheet\n${sheet()}\n
+    git('reset', '-q', '--hard', before)
+    git('clean', '-qfd')
+    throw new Fail(`sync gave up, nothing changed:\n${problem}`)
+  }
+  log(conflicted ? `merged upstream, agent resolved: ${conflicted.split('\n').join(', ')}` : 'merged upstream cleanly')
+  pushIfFork()
+}
+
+function resolveMerge(cfg, { ours, incoming, problem }, verify) {
+  const prompt = `# Ref sheet\n${sheet()}\n
 # Task
 You are merging new upstream changes into a customized copy of this project. A git merge is in progress.
 Keep every upstream change AND keep every local customization working. When they collide, re-apply the local intent on top of the new upstream code.
@@ -277,19 +320,7 @@ ${incoming}
 ${problem}
 
 ${RULES} Remove all conflict markers.`
-    problem = agentUntil(cfg, prompt, verify).problem
-  }
-  if (!problem) {
-    const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
-    if (!c.ok) problem = `git commit failed:\n${c.err || c.out}`
-  }
-  if (problem) {
-    git('reset', '-q', '--hard', before)
-    git('clean', '-qfd')
-    throw new Fail(`sync gave up, nothing changed:\n${problem}`)
-  }
-  log(conflicted ? `merged upstream, agent resolved: ${conflicted.split('\n').join(', ')}` : 'merged upstream cleanly')
-  pushIfFork()
+  return agentUntil(cfg, prompt, verify).problem
 }
 
 // --- share -------------------------------------------------------------
