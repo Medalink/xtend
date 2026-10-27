@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en" data-theme="ink">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>xTend: make any repo yours, keep getting upstream</title>
+  <meta name="description" content="Your agent changes an open-source project however you want. xTend keeps merging upstream in, and resolves the conflicts by what your changes were for.">
+  <meta property="og:title" content="xTend: make any repo yours, keep getting upstream">
+  <meta property="og:description" content="Fork, bend it with your agent, and keep getting upstream. Plain git hit 3 conflicts in this demo. xTend merged it and both test suites passed.">
+  <meta property="og:image" content="https://medalink.github.io/xtend/img/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <script>try { const t = localStorage.getItem("sd-theme"); if (t) document.documentElement.dataset.theme = t } catch {}</script>
+  <link rel="stylesheet" href="vendor/signal/signal.css">
+  <link rel="stylesheet" href="board.css">
+  <script type="module">import { init } from "./vendor/signal/signal.js"; init()</script>
+</head>
+<body>
+<a class="sd-skip" href="#main">Skip to content</a>
+
+<header class="sd-topbar x-top">
+  <a class="sd-wordmark" href="#main">xTend</a>
+  <nav class="sd-nav sd-desktop-only" aria-label="Site">
+    <a href="#hard">The hard case</a>
+    <a href="#states">Screens</a>
+    <a href="#how">How it works</a>
+    <a href="#owners">Owners</a>
+    <a href="#log">Run log</a>
+  </nav>
+  <div class="sd-topbar-end">
+    <a class="sd-btn sd-btn-sm sd-btn-primary" href="https://github.com/Medalink/xtend">GitHub</a>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+  <section class="x-hero">
+    <div class="x-wrap x-hero-grid">
+      <div class="x-hero-copy">
+        <div>
+          <span class="sd-badge" data-tone="success">Real run · 2026-10-27 · claude</span>
+          <h1 class="x-h1">Make any repo yours. <em>Keep getting upstream.</em></h1>
+        </div>
+        <div class="x-stack">
+          <p class="sd-lead">Your agent changes an open-source project however you want. xTend keeps merging upstream in, and when the two collide, it resolves them by what your changes were for.</p>
+          <div class="x-install">
+            <span class="sd-faint" aria-hidden="true">$</span><code id="cmd">npx github:Medalink/xtend get owner/repo</code>
+            <button class="sd-btn sd-btn-sm sd-btn-ghost" data-sd-copy="#cmd">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="x-window" data-sd-ornaments data-sd-ornaments-size="160">
+        <div class="sd-titlebar" role="region" aria-label="Window">
+          <span class="sd-titlebar-brand"><b>xtend sync</b></span>
+          <div class="sd-titlebar-end">
+            <span class="sd-titlebar-metric sd-desktop-only">PLAIN GIT <b>3 CONFLICTS</b></span>
+            <span class="sd-titlebar-metric sd-desktop-only">XTEND <b>1m 46s</b></span>
+          </div>
+        </div>
+        <div class="x-window-body">
+          <div class="x-window-main">
+            <pre class="x-term"><span class="sd-faint">$</span> xtend sync
+xtend: asking agent (claude), try 1/3
+xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre>
+            <pre class="x-term"><span class="sd-faint">$</span> node test.js
+ok</pre>
+            <ul class="sd-checks">
+              <li data-tone="success">3 conflicted files resolved by intent</li>
+              <li data-tone="success">Upstream's new tests pass on your redesign</li>
+              <li data-tone="success">The next sync is a no-op</li>
+            </ul>
+          </div>
+          <a class="x-window-shot" href="states/4-synced/index.html">
+            <img src="img/4-synced.png" alt="The merged app: the fork's dark ring design with upstream's session dots" width="1200" height="800">
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="x-section" id="hard" aria-labelledby="hard-h">
+    <div class="x-wrap">
+      <p class="sd-label x-kicker"><b>01</b> The hard case</p>
+      <h2 id="hard-h" class="x-h2">You rewrote the app. <em>Upstream rewrote it too.</em></h2>
+      <p class="sd-lead x-measure">The fork moved all of the DOM code from <code>app.js</code> into a new <code>ui.js</code>, restyled it and renamed the modes. Upstream then shipped a feature through <code>app.js</code> and renamed modes to presets. Git follows the move, then stops on 3 of 5 files, and the tests crash on conflict markers. Fixing that by hand means understanding both sides.</p>
+
+      <div class="x-cells x-cells-4">
+        <div class="x-cell"><span class="x-num">+69<small> −10</small></span><span class="sd-label">Your change, 5 files</span></div>
+        <div class="x-cell"><span class="x-num">+84<small> −18</small></span><span class="sd-label">Upstream 2.0, 5 files</span></div>
+        <div class="x-cell"><span class="x-num">3<small> of 5</small></span><span class="sd-label">Files plain git can't merge</span><span class="sd-status" data-tone="danger">tests fail</span></div>
+        <div class="x-cell"><span class="x-num">0</span><span class="sd-label">Left for you after xtend sync</span><span class="sd-status" data-tone="success">tests pass</span></div>
+      </div>
+
+      <div class="x-split">
+        <div class="x-frame">
+          <div class="x-frame-head"><span class="sd-label">git merge upstream/main</span><span class="sd-status" data-tone="danger">3 conflicts</span></div>
+          <div class="x-frame-body"><pre class="x-term"><span class="sd-faint">$</span> git merge upstream/main
+Auto-merging index.html
+CONFLICT (content): Merge conflict in index.html
+Auto-merging test.js
+Auto-merging timer.js
+CONFLICT (content): Merge conflict in timer.js
+Auto-merging ui.js
+CONFLICT (content): Merge conflict in ui.js
+Automatic merge failed; fix conflicts and then commit the result.
+Recorded preimage for 'index.html'
+Recorded preimage for 'timer.js'
+Recorded preimage for 'ui.js'</pre><pre class="x-term"><span class="sd-faint">$</span> node test.js
+~\you\pomo\timer.js:1
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
+^^
+SyntaxError: Unexpected token '&lt;&lt;'
+    at wrapSafe (node:internal/modules/cjs/loader:1861:18)</pre></div>
+        </div>
+        <div class="x-frame">
+          <div class="x-frame-head"><span class="sd-label">xtend sync</span><span class="sd-status" data-tone="success">merged · 1m 46s</span></div>
+          <div class="x-frame-body"><pre class="x-term"><span class="sd-faint">$</span> xtend sync
+xtend: asking agent (claude), try 1/3
+xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre><pre class="x-term"><span class="sd-faint">$</span> node test.js
+ok</pre></div>
+        </div>
+      </div>
+
+      <div class="x-cells x-cells-3">
+        <div class="x-cell">
+          <p class="sd-label">What your one sentence did</p>
+          <ul class="sd-checks"><li data-tone="pending"><span><code>index.html</code> <span class="sd-subtle">rewritten</span></span></li><li data-tone="pending"><span><code>test.js</code> <span class="sd-subtle">rewritten</span></span></li><li data-tone="success"><span><code>theme.css</code> <span class="sd-subtle">added</span></span></li><li data-tone="pending"><span><code>timer.js</code> <span class="sd-subtle">rewritten</span></span></li><li data-tone="warning"><span><code>app.js</code> → <code>ui.js</code> <span class="sd-subtle">moved and rewritten</span></span></li></ul>
+        </div>
+        <div class="x-cell">
+          <p class="sd-label">Kept from you</p>
+          <ul class="sd-checks"><li data-tone="success"><span>"Deep work" is 50 minutes, "Recharge" is 10</span></li><li data-tone="success"><span>Dark full-screen layout with the SVG progress ring</span></li><li data-tone="success"><span>Space, R, 1 and 2 still work</span></li><li data-tone="success"><span><code>app.js</code> stays gone. Upstream's changes to it landed in <code>ui.js</code></span></li></ul>
+        </div>
+        <div class="x-cell">
+          <p class="sd-label">Kept from upstream</p>
+          <ul class="sd-checks"><li data-tone="success"><span>A long break after every 4th session (<code>nextPreset</code>)</span></li><li data-tone="success"><span>Session dots and the "done today" count</span></li><li data-tone="success"><span>The chime when a session ends</span></li></ul>
+        </div>
+      </div>
+
+      <div class="x-cells x-cells-3">
+        <div class="x-cell">
+          <span class="x-step">01</span>
+          <h3 class="sd-title">Intent, not lines</h3>
+          <p class="sd-muted">Each customization is a commit whose message says what you wanted. The agent reads those, so it rebuilds "dark, ring, 50 minutes" on top of the new code instead of picking hunks.</p>
+        </div>
+        <div class="x-cell">
+          <span class="x-step">02</span>
+          <h3 class="sd-title">Both test suites decide</h3>
+          <p class="sd-muted">Upstream's tests came with the merge. xTend runs your check after every attempt and sends the failures back to the agent. Nothing is committed until it passes.</p>
+        </div>
+        <div class="x-cell">
+          <span class="x-step">03</span>
+          <h3 class="sd-title">Or nothing changes</h3>
+          <p class="sd-muted">If three tries don't produce a clean, passing tree, xTend puts everything back as it was and exits non-zero. A failed sync never leaves a half-merge behind.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="x-section" id="states" aria-labelledby="states-h">
+    <div class="x-wrap">
+      <p class="sd-label x-kicker"><b>02</b> Screens</p>
+      <h2 id="states-h" class="x-h2">Four states of one app. <em>Click any to run it.</em></h2>
+      <div class="x-shots">
+        
+        <a class="x-shot" href="states/1-upstream/index.html">
+          <span class="x-shot-head"><span class="sd-label">pomo 1.0</span><span class="sd-subtle">open</span></span>
+          <img src="img/1-upstream.png" alt="pomo 1.0" width="1200" height="800" loading="lazy">
+          <span class="x-shot-sub sd-muted">Upstream, the day you fork it.</span>
+        </a>
+        <a class="x-shot" href="states/2-yours/index.html">
+          <span class="x-shot-head"><span class="sd-label">Yours</span><span class="sd-subtle">open</span></span>
+          <img src="img/2-yours.png" alt="Yours" width="1200" height="800" loading="lazy">
+          <span class="x-shot-sub sd-muted">One sentence to your agent: dark, ring, 50 minutes, shortcuts, new file layout.</span>
+        </a>
+        <a class="x-shot" href="states/3-upstream-v2/index.html">
+          <span class="x-shot-head"><span class="sd-label">pomo 2.0</span><span class="sd-subtle">open</span></span>
+          <img src="img/3-upstream-v2.png" alt="pomo 2.0" width="1200" height="800" loading="lazy">
+          <span class="x-shot-sub sd-muted">Upstream ships long breaks, session dots and a chime, and renames modes to presets.</span>
+        </a>
+        <a class="x-shot" href="states/4-synced/index.html">
+          <span class="x-shot-head"><span class="sd-label">Yours + 2.0</span><span class="sd-subtle">open</span></span>
+          <img src="img/4-synced.png" alt="Yours + 2.0" width="1200" height="800" loading="lazy">
+          <span class="x-shot-sub sd-muted">After <code>xtend sync</code>. Your design, their features, both test suites green.</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="x-section" id="how" aria-labelledby="how-h">
+    <div class="x-wrap">
+      <p class="sd-label x-kicker"><b>03</b> How it works</p>
+      <h2 id="how-h" class="x-h2">Four commands. <em>Tools you already have.</em></h2>
+      <div class="x-cells x-cells-4">
+        <div class="x-cell"><code class="x-cmd">xtend get owner/repo</code><p class="sd-muted">Forks it on GitHub, clones it and writes the ref sheet. It also turns on a daily Action that runs <code>xtend sync</code> for you.</p></div>
+        <div class="x-cell"><code class="x-cmd">xtend "make it dark"</code><p class="sd-muted">Your agent makes the change with the ref sheet in hand. Your check has to pass, and the commit message keeps what you asked for.</p></div>
+        <div class="x-cell"><code class="x-cmd">xtend sync</code><p class="sd-muted">Merges upstream with git. When git can't finish, the agent does, guided by your intent. It retries until the check passes, or nothing changes.</p></div>
+        <div class="x-cell"><code class="x-cmd">xtend sheet</code><p class="sd-muted">Reads the code and writes a short map for agents: layout, commands, where to extend, and which files churn.</p></div>
+      </div>
+      <dl class="sd-kv x-kv">
+        <dt>Storage</dt><dd>Your GitHub fork. No service, no database, no account.</dd>
+        <dt>Merging</dt><dd><code>git merge</code>, with <code>rerere</code> on</dd>
+        <dt>Intent</dt><dd>Your commit messages</dd>
+        <dt>Agent</dt><dd><code>claude -p</code>, <code>codex exec</code>, or anything in <code>XTEND_AGENT</code></dd>
+        <dt>Gate</dt><dd>Your <code>check</code> command, such as <code>npm test</code></dd>
+        <dt>Size</dt><dd>One file, no dependencies</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="x-section" id="owners" aria-labelledby="owners-h">
+    <div class="x-wrap x-split">
+      <div>
+        <p class="sd-label x-kicker"><b>04</b> Owners</p>
+        <h2 id="owners-h" class="x-h2">Nothing to maintain. <em>One file if you want.</em></h2>
+        <p class="sd-lead">Your project works with xTend as it is. To help people who extend it, run <code>xtend sheet</code> once and commit <code>XTEND.md</code>. It works like a spec sheet instead of an MCP server: every agent reads it before every change and every merge.</p>
+      </div>
+      <div class="x-frame">
+        <div class="x-frame-head"><span class="sd-label">XTEND.md</span><span class="sd-subtle">written by xtend sheet in this run</span></div>
+        <pre class="x-term x-sheet"># pomo
+
+## What it is
+
+A Pomodoro timer in the browser: static HTML, CSS and plain JavaScript, with no build step and no dependencies.
+`timer.js` holds the pure timer logic and also runs under Node for tests. `app.js` connects that logic to the DOM.
+
+## Map
+
+- `index.html`: the page markup. Mode tabs (`[data-mode]`), `#time`, `#start`, `#reset`. Loads `timer.js` and then `app.js`.
+- `timer.js`: the pure logic. `MODES`, `createTimer(mode)`, `tick(t)`, `format(seconds)`. Exports through `module.exports` only when `module` exists.
+- `app.js`: browser glue. Module-level state (`timer`, `interval`), plus `render()`, `setMode()`, `toggle()`, `step()` and the event wiring.
+- `style.css`: all styles. Classes: `.card`, `.tabs`, `.time`, `.controls`, `.primary`, `.active`.
+- `test.js`: plain `node:assert/strict` assertions against `timer.js`. Prints `ok` on success.
+- `package.json`: private, no dependencies, one script: `test`.
+
+## Build, run, test
+
+- Build: none. The source files are what ships.
+- Run: open `index.html` in a browser, or serve the folder with `npx serve .` or `python -m http.server 8000`.
+- Test: `npm test` (same as `node test.js`). It exits non-zero on the first failed assertion and prints `ok` when everything passes.
+- No linter, formatter or CI config exists in the repo.
+
+## Extension points
+
+- **New timer mode** (for example a long break):
+  1. Add an entry to `MODES` in `timer.js`: `long: { label: 'Long', minutes: 15 }`.
+  2. Add a tab to `nav.tabs` in `index.html`: `&lt;button data-mode="long"&gt;Long&lt;/button&gt;`. `app.js` finds tabs by `[data-mode]`, so it needs no change.
+  3. If the new mode should be part of the automatic cycle, edit the transition in `step()` in `app.js` (`timer.mode === 'focus' ? 'break' : 'focus'`).
+  4. Add a `createTimer('long')` assertion to `test.js`.
+- **Change durations**: edit `minutes` in `MODES` in `timer.js`. Tests derive the expected values from `MODES`, so they keep passing.
+- **New pure logic** (session counter, next-mode rule, formatting): add a function to `timer.js`, add it to the `module.exports` object on the last line, and assert it in `test.js`. It is then available as a global in the browser too.
+- **New control button**: add markup in `.controls` in `index.html`. Wire it in `app.js` next to the existing `$('reset').addEventListener(...)`. Any visible text it changes goes in `render()`.
+- **Things that happen when a timer finishes** (sound, notification): put them in `step()` inside the `if (timer.done)` branch, before `setMode(...)`.
+- **Persistence (localStorage)**: read the saved value where `let timer = createTimer('focus')` starts `app.js`, and write it in `render()`. Keep storage out of `timer.js` so it stays testable in Node.
+- **Styling and themes**: `style.css`. The accent color `#d9534f` appears in `h1`, `.tabs button.active` and `.primary`. To theme it, turn it into a CSS custom property first.
+
+## Conventions
+
+- Plain ES2015+ scripts with no modules, bundler or framework. The files share globals, so each new top-level name must be unique across `timer.js` and `app.js`.
+- Script order matters: `timer.js` must load before `app.js` in `index.html`.
+- Keep `timer.js` free of the DOM and of timers, and make it immutable: functions return new objects (`{ ...t, remaining }`) and never mutate. `tick` returns the same object when nothing changes (the test checks this with `assert.equal(tick(t), t)`).
+- Timer state shape: `{ mode, remaining, running, done }`, with `remaining` in seconds.
+- `app.js` reassigns `timer` as a whole and then calls `render()`. `render()` is the only function that writes to the DOM.
+- Use `$(id)` for lookups by id, `data-mode` for mode tabs, and the `.active` class for selected state.
+- Style: two-space indent, no semicolons, single quotes, template literals for interpolation, `const`/`let` (never `var`), camelCase names, short functions.
+- CSS: one flat stylesheet with simple class selectors and short rules on one line. Use `font-variant-numeric: tabular-nums` for digits.
+- Tests: add top-level `assert.*` calls to `test.js` and keep `console.log('ok')` as the last line.
+
+## Hot zones
+
+The history is a single commit (`3d435cd pomo 1.0`) that touched every file, so it gives no churn data. The files below are hot zones because of their structure.
+
+- `timer.js`: `MODES`, the `createTimer` and `tick` signatures, and the `module.exports` line. Add to it rather than editing it, and keep local modes as extra `MODES` keys.
+- `app.js`: `step()` (the mode transition) and `render()`. Put local behavior in small named functions and call them from these with a single line, so upstream edits merge cleanly.
+- `index.html`: the `&lt;script&gt;` tags and the `.tabs` / `.controls` blocks. Add elements, and don't reorder or rename the existing ids (`time`, `start`, `reset`).
+- `style.css`: append local rules at the end instead of editing existing ones.
+- `test.js`: append new assertions after the existing ones and before `console.log('ok')`.
+</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="x-section" id="log" aria-labelledby="log-h">
+    <div class="x-wrap">
+      <p class="sd-label x-kicker"><b>05</b> Run log</p>
+      <h2 id="log-h" class="x-h2">Every step, unedited. <em>5m 32s end to end.</em></h2>
+      <p class="sd-muted x-measure">This is real output from <code>demo/run.mjs</code>, with the real agent (<code>claude -p</code>). Run it yourself with <code>node demo/run.mjs</code>.</p>
+      <div class="x-logs">
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">01</span>
+          <span><span class="sd-badge" data-tone="extra">owner</span></span>
+          <span class="x-log-title">The owner writes a ref sheet once <code class="sd-subtle">xtend sheet</code></span>
+          <span class="sd-status" data-tone="success">ok</span>
+          <span class="sd-subtle x-log-t">40.8s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> xtend sheet
+xtend: asking agent (claude), try 1/3
+xtend: wrote XTEND.md</pre>
+      </details>
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">02</span>
+          <span><span class="sd-badge">you</span></span>
+          <span class="x-log-title">You take your own copy <code class="sd-subtle">xtend get ~\pomo</code></span>
+          <span class="sd-status" data-tone="success">ok</span>
+          <span class="sd-subtle x-log-t">2.2s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> xtend get ~\pomo
+xtend: upstream ships XTEND.md, using it
+xtend: ready in ./pomo. Try: cd pomo &amp;&amp; xtend "describe a change"</pre>
+      </details>
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">03</span>
+          <span><span class="sd-badge">you</span></span>
+          <span class="x-log-title">You make it yours <code class="sd-subtle">xtend "Redesign pomo into a dark, distraction-free focus ..."</code></span>
+          <span class="sd-status" data-tone="success">ok</span>
+          <span class="sd-subtle x-log-t">3m 2s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> xtend "Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to "Deep work" (50 minutes) and "Recharge" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js."
+xtend: asking agent (claude), try 1/3
+xtend: committed</pre>
+      </details>
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">04</span>
+          <span><span class="sd-badge">you</span></span>
+          <span class="x-log-title">What plain git does with it <code class="sd-subtle">git merge upstream/main</code></span>
+          <span class="sd-status" data-tone="danger">exit 1</span>
+          <span class="sd-subtle x-log-t">0.5s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> git merge upstream/main
+Auto-merging index.html
+CONFLICT (content): Merge conflict in index.html
+Auto-merging test.js
+Auto-merging timer.js
+CONFLICT (content): Merge conflict in timer.js
+Auto-merging ui.js
+CONFLICT (content): Merge conflict in ui.js
+Automatic merge failed; fix conflicts and then commit the result.
+Recorded preimage for 'index.html'
+Recorded preimage for 'timer.js'
+Recorded preimage for 'ui.js'</pre>
+      </details>
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">05</span>
+          <span><span class="sd-badge">you</span></span>
+          <span class="x-log-title">And the tests after it <code class="sd-subtle">node test.js</code></span>
+          <span class="sd-status" data-tone="danger">exit 1</span>
+          <span class="sd-subtle x-log-t">0.1s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> node test.js
+~\you\pomo\timer.js:1
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
+^^
+SyntaxError: Unexpected token '&lt;&lt;'
+    at wrapSafe (node:internal/modules/cjs/loader:1861:18)
+    at Module._compile (node:internal/modules/cjs/loader:1903:20)
+    at Object..js (node:internal/modules/cjs/loader:2060:10)
+    at Module.load (node:internal/modules/cjs/loader:1651:32)
+    at Module._load (node:internal/modules/cjs/loader:1443:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.require (node:internal/modules/cjs/loader:1674:12)
+    at require (node:internal/modules/helpers:157:16)
+    at Object.&lt;anonymous&gt; (~\you\pomo\test.js:2:85)
+    at Module._compile (node:internal/modules/cjs/loader:1929:14)
+Node.js v24.22.1</pre>
+      </details>
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">06</span>
+          <span><span class="sd-badge">you</span></span>
+          <span class="x-log-title">xtend merges it for you <code class="sd-subtle">xtend sync</code></span>
+          <span class="sd-status" data-tone="success">ok</span>
+          <span class="sd-subtle x-log-t">1m 46s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> xtend sync
+xtend: asking agent (claude), try 1/3
+xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre>
+      </details>
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">07</span>
+          <span><span class="sd-badge">you</span></span>
+          <span class="x-log-title">Upstream tests and yours, on the merged code <code class="sd-subtle">node test.js</code></span>
+          <span class="sd-status" data-tone="success">ok</span>
+          <span class="sd-subtle x-log-t">0s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> node test.js
+ok</pre>
+      </details>
+      <details class="x-log">
+        <summary><span class="x-log-row">
+          <span class="x-log-n sd-faint">08</span>
+          <span><span class="sd-badge">you</span></span>
+          <span class="x-log-title">And again tomorrow <code class="sd-subtle">xtend sync</code></span>
+          <span class="sd-status" data-tone="success">ok</span>
+          <span class="sd-subtle x-log-t">0.3s</span>
+        </span></summary>
+        <pre class="x-term"><span class="sd-faint">$</span> xtend sync
+xtend: already up to date</pre>
+      </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="x-cta" aria-labelledby="cta-h">
+    <div class="x-wrap x-stack">
+      <h2 id="cta-h" class="x-h1">Fork less. <em>Extend more.</em></h2>
+      <div class="sd-actions">
+        <a class="sd-btn sd-btn-lg sd-btn-primary" href="https://github.com/Medalink/xtend">Get xTend</a>
+        <a class="sd-btn sd-btn-lg" href="https://github.com/Medalink/xtend/blob/main/xtend.mjs">Read the code</a>
+      </div>
+      <p class="sd-subtle">From <a href="https://x.com/trq212/status/2115188992861970693">an idea by Thariq</a>: modify software with agents and get upstream merged in automatically.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="x-wrap x-foot">
+  <span class="sd-subtle">MIT · built with <a href="https://github.com/Medalink/signal-design">Signal</a></span>
+  <div class="sd-seg" aria-label="Theme">
+    <button type="button" data-sd-theme="ink">ink</button>
+    <button type="button" data-sd-theme="graphite">graphite</button>
+    <button type="button" data-sd-theme="paper">paper</button>
+  </div>
+</footer>
+</body>
+</html>

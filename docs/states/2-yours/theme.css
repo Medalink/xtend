@@ -1,0 +1,27 @@
+:root { --bg: #0d0e12; --fg: #e9e7e4; --dim: #6c707b; --track: #1c1e25; --accent: #e5675f; }
+body[data-mode="break"] { --accent: #5fb3a1; }
+
+body { background: var(--bg); color: var(--fg); }
+
+.stage { width: 100%; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6vmin; padding: 24px; }
+
+button { background: transparent; border-color: transparent; color: var(--dim); transition: color .2s, background .2s; }
+button:hover { color: var(--fg); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tabs button.active { background: transparent; border-color: transparent; color: var(--fg); }
+
+.dial { position: relative; width: min(72vmin, 520px); aspect-ratio: 1; display: grid; place-items: center; }
+.ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 2; }
+.ring-track { stroke: var(--track); }
+.ring-progress { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 1; transition: stroke-dashoffset 1s linear, stroke .4s; }
+
+.time { margin: 0; font-size: min(17vmin, 124px); font-weight: 200; letter-spacing: .02em; }
+
+.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.primary:hover { color: var(--bg); }
+
+.tabs, .controls { transition: opacity .6s; }
+body.running .tabs, body.running .controls { opacity: .12; }
+body.running .tabs:hover, body.running .controls:hover, body.running .tabs:has(:focus-visible), body.running .controls:has(:focus-visible) { opacity: 1; }

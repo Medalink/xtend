@@ -1,0 +1,95 @@
+{
+  "generated": "2026-10-27T22:38:13.447Z",
+  "agent": "claude -p --permission-mode acceptEdits --allowedTools \"Bash(git rm *),Bash(git mv *)\"",
+  "redesign": "Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to \"Deep work\" (50 minutes) and \"Recharge\" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.",
+  "divergence": "5 files changed, 69 insertions(+), 10 deletions(-)",
+  "forkFiles": "M\tindex.html\nM\ttest.js\nA\ttheme.css\nM\ttimer.js\nR059\tapp.js\tui.js",
+  "upstreamChange": "5 files changed, 84 insertions(+), 18 deletions(-)",
+  "plain": {
+    "status": 1,
+    "conflicted": [
+      "index.html",
+      "timer.js",
+      "ui.js"
+    ],
+    "markers": "index.html:1\ntimer.js:1\nui.js:1",
+    "testsPassed": false
+  },
+  "kept": {
+    "Deep work 50 min": true,
+    "progress ring": true,
+    "keyboard shortcuts": true,
+    "app.js stays deleted": true,
+    "long break every 4": true,
+    "session dots": true,
+    "chime": true
+  },
+  "log": "*   xtend: sync upstream/main (726fc16)\n|\\  \n| * Long breaks every 4 sessions, session dots, chime; rename modes to presets\n* | xtend: Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to \"Deep work\" (50 minutes) and \"Recharge\" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.\n* | Run the tests on every change\n* | xtend: set up\n|/  \n* Add XTEND.md\n* pomo 1.0",
+  "steps": [
+    {
+      "who": "owner",
+      "title": "The owner writes a ref sheet once",
+      "command": "xtend sheet",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: wrote XTEND.md",
+      "seconds": 40.8,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You take your own copy",
+      "command": "xtend get ~\\pomo",
+      "output": "xtend: upstream ships XTEND.md, using it\nxtend: ready in ./pomo. Try: cd pomo && xtend \"describe a change\"",
+      "seconds": 2.2,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You make it yours",
+      "command": "xtend \"Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to \"Deep work\" (50 minutes) and \"Recharge\" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 182.2,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What plain git does with it",
+      "command": "git merge upstream/main",
+      "output": "Auto-merging index.html\nCONFLICT (content): Merge conflict in index.html\nAuto-merging test.js\nAuto-merging timer.js\nCONFLICT (content): Merge conflict in timer.js\nAuto-merging ui.js\nCONFLICT (content): Merge conflict in ui.js\nAutomatic merge failed; fix conflicts and then commit the result.\nRecorded preimage for 'index.html'\nRecorded preimage for 'timer.js'\nRecorded preimage for 'ui.js'",
+      "seconds": 0.5,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "And the tests after it",
+      "command": "node test.js",
+      "output": "~\\you\\pomo\\timer.js:1\r\n<<<<<<< HEAD\r\n^^\r\nSyntaxError: Unexpected token '<<'\r\n    at wrapSafe (node:internal/modules/cjs/loader:1861:18)\r\n    at Module._compile (node:internal/modules/cjs/loader:1903:20)\r\n    at Object..js (node:internal/modules/cjs/loader:2060:10)\r\n    at Module.load (node:internal/modules/cjs/loader:1651:32)\r\n    at Module._load (node:internal/modules/cjs/loader:1443:12)\r\n    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\r\n    at Module.require (node:internal/modules/cjs/loader:1674:12)\r\n    at require (node:internal/modules/helpers:157:16)\r\n    at Object.<anonymous> (~\\you\\pomo\\test.js:2:85)\r\n    at Module._compile (node:internal/modules/cjs/loader:1929:14)\r\nNode.js v24.22.1\r",
+      "seconds": 0.1,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "xtend merges it for you",
+      "command": "xtend sync",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream, agent resolved: index.html, timer.js, ui.js",
+      "seconds": 106.1,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Upstream tests and yours, on the merged code",
+      "command": "node test.js",
+      "output": "ok",
+      "seconds": 0,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "And again tomorrow",
+      "command": "xtend sync",
+      "output": "xtend: already up to date",
+      "seconds": 0.3,
+      "status": 0
+    }
+  ],
+  "sheet": "# pomo\n\n## What it is\n\nA Pomodoro timer in the browser: static HTML, CSS and plain JavaScript, with no build step and no dependencies.\n`timer.js` holds the pure timer logic and also runs under Node for tests. `app.js` connects that logic to the DOM.\n\n## Map\n\n- `index.html`: the page markup. Mode tabs (`[data-mode]`), `#time`, `#start`, `#reset`. Loads `timer.js` and then `app.js`.\n- `timer.js`: the pure logic. `MODES`, `createTimer(mode)`, `tick(t)`, `format(seconds)`. Exports through `module.exports` only when `module` exists.\n- `app.js`: browser glue. Module-level state (`timer`, `interval`), plus `render()`, `setMode()`, `toggle()`, `step()` and the event wiring.\n- `style.css`: all styles. Classes: `.card`, `.tabs`, `.time`, `.controls`, `.primary`, `.active`.\n- `test.js`: plain `node:assert/strict` assertions against `timer.js`. Prints `ok` on success.\n- `package.json`: private, no dependencies, one script: `test`.\n\n## Build, run, test\n\n- Build: none. The source files are what ships.\n- Run: open `index.html` in a browser, or serve the folder with `npx serve .` or `python -m http.server 8000`.\n- Test: `npm test` (same as `node test.js`). It exits non-zero on the first failed assertion and prints `ok` when everything passes.\n- No linter, formatter or CI config exists in the repo.\n\n## Extension points\n\n- **New timer mode** (for example a long break):\n  1. Add an entry to `MODES` in `timer.js`: `long: { label: 'Long', minutes: 15 }`.\n  2. Add a tab to `nav.tabs` in `index.html`: `<button data-mode=\"long\">Long</button>`. `app.js` finds tabs by `[data-mode]`, so it needs no change.\n  3. If the new mode should be part of the automatic cycle, edit the transition in `step()` in `app.js` (`timer.mode === 'focus' ? 'break' : 'focus'`).\n  4. Add a `createTimer('long')` assertion to `test.js`.\n- **Change durations**: edit `minutes` in `MODES` in `timer.js`. Tests derive the expected values from `MODES`, so they keep passing.\n- **New pure logic** (session counter, next-mode rule, formatting): add a function to `timer.js`, add it to the `module.exports` object on the last line, and assert it in `test.js`. It is then available as a global in the browser too.\n- **New control button**: add markup in `.controls` in `index.html`. Wire it in `app.js` next to the existing `$('reset').addEventListener(...)`. Any visible text it changes goes in `render()`.\n- **Things that happen when a timer finishes** (sound, notification): put them in `step()` inside the `if (timer.done)` branch, before `setMode(...)`.\n- **Persistence (localStorage)**: read the saved value where `let timer = createTimer('focus')` starts `app.js`, and write it in `render()`. Keep storage out of `timer.js` so it stays testable in Node.\n- **Styling and themes**: `style.css`. The accent color `#d9534f` appears in `h1`, `.tabs button.active` and `.primary`. To theme it, turn it into a CSS custom property first.\n\n## Conventions\n\n- Plain ES2015+ scripts with no modules, bundler or framework. The files share globals, so each new top-level name must be unique across `timer.js` and `app.js`.\n- Script order matters: `timer.js` must load before `app.js` in `index.html`.\n- Keep `timer.js` free of the DOM and of timers, and make it immutable: functions return new objects (`{ ...t, remaining }`) and never mutate. `tick` returns the same object when nothing changes (the test checks this with `assert.equal(tick(t), t)`).\n- Timer state shape: `{ mode, remaining, running, done }`, with `remaining` in seconds.\n- `app.js` reassigns `timer` as a whole and then calls `render()`. `render()` is the only function that writes to the DOM.\n- Use `$(id)` for lookups by id, `data-mode` for mode tabs, and the `.active` class for selected state.\n- Style: two-space indent, no semicolons, single quotes, template literals for interpolation, `const`/`let` (never `var`), camelCase names, short functions.\n- CSS: one flat stylesheet with simple class selectors and short rules on one line. Use `font-variant-numeric: tabular-nums` for digits.\n- Tests: add top-level `assert.*` calls to `test.js` and keep `console.log('ok')` as the last line.\n\n## Hot zones\n\nThe history is a single commit (`3d435cd pomo 1.0`) that touched every file, so it gives no churn data. The files below are hot zones because of their structure.\n\n- `timer.js`: `MODES`, the `createTimer` and `tick` signatures, and the `module.exports` line. Add to it rather than editing it, and keep local modes as extra `MODES` keys.\n- `app.js`: `step()` (the mode transition) and `render()`. Put local behavior in small named functions and call them from these with a single line, so upstream edits merge cleanly.\n- `index.html`: the `<script>` tags and the `.tabs` / `.controls` blocks. Add elements, and don't reorder or rename the existing ids (`time`, `start`, `reset`).\n- `style.css`: append local rules at the end instead of editing existing ones.\n- `test.js`: append new assertions after the existing ones and before `console.log('ok')`.\n"
+}

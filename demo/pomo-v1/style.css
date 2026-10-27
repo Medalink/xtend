@@ -1,0 +1,42 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #f6f1eb;
+  color: #3b2f2a;
+  font-family: system-ui, sans-serif;
+}
+
+.card {
+  width: 340px;
+  padding: 32px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(59, 47, 42, 0.1);
+  text-align: center;
+}
+
+h1 { margin: 0 0 20px; font-size: 18px; color: #d9534f; letter-spacing: 0.04em; }
+
+.tabs { display: flex; gap: 8px; justify-content: center; }
+
+button {
+  border: 1px solid #e5d9cf;
+  background: #fff;
+  color: inherit;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tabs button.active { background: #fbe9e7; border-color: #d9534f; color: #d9534f; }
+
+.time { font-size: 72px; font-weight: 700; margin: 24px 0; font-variant-numeric: tabular-nums; }
+
+.controls { display: flex; gap: 8px; justify-content: center; }
+
+.primary { background: #d9534f; border-color: #d9534f; color: #fff; min-width: 100px; }
