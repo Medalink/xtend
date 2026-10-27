@@ -50,7 +50,7 @@ const checks = (keys) => keys.map((k) => `<li data-tone="${d.kept[k] ? 'success'
 const term = (s, lines = 40, head = false) => {
   const all = s.output.split('\n')
   const out = (head ? all.slice(0, lines) : all.slice(-lines)).join('\n')
-  return `<pre class="x-term"><span class="sd-faint">$</span> ${esc(s.command)}\n${esc(out)}</pre>`
+  return `<pre class="x-term" tabindex="0"><span class="sd-faint">$</span> ${esc(s.command)}\n${esc(out)}</pre>`
 }
 
 const shots = [
@@ -252,7 +252,7 @@ const html = `<!doctype html>
       </div>
       <div class="x-frame">
         <div class="x-frame-head"><span class="sd-label">XTEND.md</span><span class="sd-subtle">written by xtend sheet in this run</span></div>
-        <pre class="x-term x-sheet">${esc(d.sheet || '')}</pre>
+        <pre class="x-term x-sheet" tabindex="0" aria-label="XTEND.md">${esc(d.sheet || '')}</pre>
       </div>
     </div>
   </section>

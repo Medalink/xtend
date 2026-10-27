@@ -58,10 +58,10 @@
         </div>
         <div class="x-window-body">
           <div class="x-window-main">
-            <pre class="x-term"><span class="sd-faint">$</span> xtend sync
+            <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> xtend sync
 xtend: asking agent (claude), try 1/3
 xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre>
-            <pre class="x-term"><span class="sd-faint">$</span> node test.js
+            <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> node test.js
 ok</pre>
             <ul class="sd-checks">
               <li data-tone="success">3 conflicted files resolved by intent</li>
@@ -93,7 +93,7 @@ ok</pre>
       <div class="x-split">
         <div class="x-frame">
           <div class="x-frame-head"><span class="sd-label">git merge upstream/main</span><span class="sd-status" data-tone="danger">3 conflicts</span></div>
-          <div class="x-frame-body"><pre class="x-term"><span class="sd-faint">$</span> git merge upstream/main
+          <div class="x-frame-body"><pre class="x-term" tabindex="0"><span class="sd-faint">$</span> git merge upstream/main
 Auto-merging index.html
 CONFLICT (content): Merge conflict in index.html
 Auto-merging test.js
@@ -104,7 +104,7 @@ CONFLICT (content): Merge conflict in ui.js
 Automatic merge failed; fix conflicts and then commit the result.
 Recorded preimage for 'index.html'
 Recorded preimage for 'timer.js'
-Recorded preimage for 'ui.js'</pre><pre class="x-term"><span class="sd-faint">$</span> node test.js
+Recorded preimage for 'ui.js'</pre><pre class="x-term" tabindex="0"><span class="sd-faint">$</span> node test.js
 ~\you\pomo\timer.js:1
 &lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
 ^^
@@ -113,9 +113,9 @@ SyntaxError: Unexpected token '&lt;&lt;'
         </div>
         <div class="x-frame">
           <div class="x-frame-head"><span class="sd-label">xtend sync</span><span class="sd-status" data-tone="success">merged · 1m 46s</span></div>
-          <div class="x-frame-body"><pre class="x-term"><span class="sd-faint">$</span> xtend sync
+          <div class="x-frame-body"><pre class="x-term" tabindex="0"><span class="sd-faint">$</span> xtend sync
 xtend: asking agent (claude), try 1/3
-xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre><pre class="x-term"><span class="sd-faint">$</span> node test.js
+xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre><pre class="x-term" tabindex="0"><span class="sd-faint">$</span> node test.js
 ok</pre></div>
         </div>
       </div>
@@ -215,7 +215,7 @@ ok</pre></div>
       </div>
       <div class="x-frame">
         <div class="x-frame-head"><span class="sd-label">XTEND.md</span><span class="sd-subtle">written by xtend sheet in this run</span></div>
-        <pre class="x-term x-sheet"># pomo
+        <pre class="x-term x-sheet" tabindex="0" aria-label="XTEND.md"># pomo
 
 ## What it is
 
@@ -292,7 +292,7 @@ The history is a single commit (`3d435cd pomo 1.0`) that touched every file, so 
           <span class="sd-status" data-tone="success">ok</span>
           <span class="sd-subtle x-log-t">40.8s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> xtend sheet
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> xtend sheet
 xtend: asking agent (claude), try 1/3
 xtend: wrote XTEND.md</pre>
       </details>
@@ -304,7 +304,7 @@ xtend: wrote XTEND.md</pre>
           <span class="sd-status" data-tone="success">ok</span>
           <span class="sd-subtle x-log-t">2.2s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> xtend get ~\pomo
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> xtend get ~\pomo
 xtend: upstream ships XTEND.md, using it
 xtend: ready in ./pomo. Try: cd pomo &amp;&amp; xtend "describe a change"</pre>
       </details>
@@ -316,7 +316,7 @@ xtend: ready in ./pomo. Try: cd pomo &amp;&amp; xtend "describe a change"</pre>
           <span class="sd-status" data-tone="success">ok</span>
           <span class="sd-subtle x-log-t">3m 2s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> xtend "Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to "Deep work" (50 minutes) and "Recharge" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js."
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> xtend "Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to "Deep work" (50 minutes) and "Recharge" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js."
 xtend: asking agent (claude), try 1/3
 xtend: committed</pre>
       </details>
@@ -328,7 +328,7 @@ xtend: committed</pre>
           <span class="sd-status" data-tone="danger">exit 1</span>
           <span class="sd-subtle x-log-t">0.5s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> git merge upstream/main
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> git merge upstream/main
 Auto-merging index.html
 CONFLICT (content): Merge conflict in index.html
 Auto-merging test.js
@@ -349,7 +349,7 @@ Recorded preimage for 'ui.js'</pre>
           <span class="sd-status" data-tone="danger">exit 1</span>
           <span class="sd-subtle x-log-t">0.1s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> node test.js
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> node test.js
 ~\you\pomo\timer.js:1
 &lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
 ^^
@@ -374,7 +374,7 @@ Node.js v24.22.1</pre>
           <span class="sd-status" data-tone="success">ok</span>
           <span class="sd-subtle x-log-t">1m 46s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> xtend sync
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> xtend sync
 xtend: asking agent (claude), try 1/3
 xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre>
       </details>
@@ -386,7 +386,7 @@ xtend: merged upstream, agent resolved: index.html, timer.js, ui.js</pre>
           <span class="sd-status" data-tone="success">ok</span>
           <span class="sd-subtle x-log-t">0s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> node test.js
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> node test.js
 ok</pre>
       </details>
       <details class="x-log">
@@ -397,7 +397,7 @@ ok</pre>
           <span class="sd-status" data-tone="success">ok</span>
           <span class="sd-subtle x-log-t">0.3s</span>
         </span></summary>
-        <pre class="x-term"><span class="sd-faint">$</span> xtend sync
+        <pre class="x-term" tabindex="0"><span class="sd-faint">$</span> xtend sync
 xtend: already up to date</pre>
       </details>
       </div>

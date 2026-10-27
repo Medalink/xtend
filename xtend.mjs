@@ -72,12 +72,30 @@ function pushIfFork() {
   process.exitCode = 1
 }
 
+// git runs hooks and reads config on our next command, so an agent must not be able to change them.
+function gitSnapshot() {
+  const dir = git('rev-parse', '--git-common-dir')
+  const list = () => ['config', ...fs.readdirSync(path.join(dir, 'hooks'), { withFileTypes: true }).filter((e) => e.isFile()).map((e) => `hooks/${e.name}`)]
+  const files = new Map(list().map((f) => [f, fs.readFileSync(path.join(dir, f))]))
+  return () => {
+    let changed = false
+    for (const f of list()) if (!files.has(f)) { fs.rmSync(path.join(dir, f)); changed = true }
+    for (const [f, buf] of files) {
+      const p = path.join(dir, f)
+      if (!fs.existsSync(p) || !fs.readFileSync(p).equals(buf)) { fs.writeFileSync(p, buf); changed = true }
+    }
+    return changed
+  }
+}
+
 // Runs the agent until `verify` returns null, feeding each failure back in.
 function agentUntil(cfg, prompt, verify) {
   let problem = null
   for (let i = 1; i <= TRIES; i++) {
     log(`asking agent (${cfg.agent.split(' ')[0]}), try ${i}/${TRIES}`)
+    const restoreGit = gitSnapshot()
     const r = shell(cfg.agent, problem ? `${prompt}\n\n## Your last attempt failed this check\n${problem}` : prompt)
+    if (restoreGit()) return { problem: 'the agent changed .git/config or .git/hooks; xtend restored them and stopped' }
     if (!r.ok) return { problem: 'agent exited with an error', summary: r.out }
     problem = verify()
     if (!problem) return { problem: null, summary: r.out }

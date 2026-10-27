@@ -42,7 +42,8 @@ It uses tools you already have. Nothing runs as a service.
 
 ## Safety
 
-- The agent edits files. It may delete or move them only with `git rm` and `git mv`, and it can't run other commands. xTend owns every commit, merge and push.
+- The agent edits files. With the default `claude -p` command, the only shell commands it may run are `git rm` and `git mv`. Claude Code also blocks writes to `.git/`. Other agents get the same rules in their prompt, but their own sandbox enforces them. xTend owns every commit, merge and push.
+- Hooks and git config run code on xTend's next git command. If any agent changes `.git/config` or `.git/hooks`, xTend puts them back and stops.
 - A sync is accepted only if the merge is still in progress, no conflict markers are left, and your check passes. xTend makes up to three tries and feeds each failure back to the agent.
 - Otherwise xTend resets to exactly where you were and exits non-zero, so the Action fails and GitHub emails you. A failed push also exits non-zero.
 - xTend refuses to start with uncommitted or untracked files, so a rollback can never take your work with it.
@@ -66,7 +67,7 @@ GitHub's default `GITHUB_TOKEN` can't push upstream commits that touch `.github/
 ## Develop
 
 ```sh
-node test/e2e.mjs        # fake agent, local repos, every success and failure path (~10s)
+node test/e2e.mjs        # fake agent, local repos, every success and failure path (~40s)
 node demo/run.mjs        # the real demo with your agent (~4 min), writes docs/data and docs/states
 node demo/board.mjs      # rebuilds docs/index.html from that run
 node demo/shoot.mjs      # screenshots into docs/img (needs playwright in tools/)

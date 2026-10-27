@@ -112,6 +112,10 @@ const kept = {
   chime: /AudioContext/.test(code),
 }
 for (const [k, v] of Object.entries(kept)) assert.ok(v, `merged code keeps: ${k}`)
+const mergedTests = merged('test.js')
+for (const line of fs.readFileSync(path.join(here, 'pomo-v2', 'test.js'), 'utf8').split(/\r?\n/).filter((l) => l.startsWith('assert'))) {
+  assert.ok(mergedTests.includes(line), `upstream test survives the merge unedited: ${line}`)
+}
 
 const result = {
   generated: new Date().toISOString(),

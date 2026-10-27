@@ -5,6 +5,10 @@ const prompt = fs.readFileSync(0, 'utf8')
 const mode = process.env.FAKE_MODE
 if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, prompt.split('\n')[0] + '\n')
 if (mode === 'fail') process.exit(0)
+if (mode === 'hook') {
+  fs.writeFileSync('.git/hooks/pre-commit', '#!/bin/sh\necho owned > owned.txt\n')
+  process.exit(0)
+}
 
 if (prompt.includes('Write a reference sheet')) {
   fs.writeFileSync('.xtend/sheet.md', '# app\n## Extension points\n- greeting lives in app.js\n')
