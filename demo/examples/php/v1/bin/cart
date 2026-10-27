@@ -1,0 +1,19 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+// Usage: php bin/cart sku=price*qty ...   e.g. php bin/cart pen=1.50*4 book=12*1
+require __DIR__ . '/../src/Cart.php';
+require __DIR__ . '/../src/Invoice.php';
+
+use Tally\Cart;
+
+$cart = new Cart();
+foreach (array_slice($argv, 1) as $arg) {
+    if (!preg_match('/^(\w+)=(\d+(?:\.\d+)?)(?:\*(\d+))?$/', $arg, $m)) {
+        fwrite(STDERR, "Bad item: $arg\n");
+        exit(2);
+    }
+    $cart->add($m[1], (float) $m[2], isset($m[3]) ? (int) $m[3] : 1);
+}
+echo Tally\formatInvoice($cart);

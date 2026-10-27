@@ -1,0 +1,20 @@
+{
+  "name": "tally",
+  "lang": "PHP",
+  "about": "A small shopping cart and invoice library with a command-line invoice printer.",
+  "check": "php tests/run.php",
+  "change": "Give members 5% off the subtotal: add a memberDiscount() function that computes it, a --member flag on bin/cart, and a \"Member discount\" line on the printed invoice.",
+  "upstream": "Tally 2.0: integer cents, coupon codes and per-category tax",
+  "kept": {
+    "yours": {
+      "memberDiscount function": "memberDiscount\\s*\\(",
+      "--member flag": "--member",
+      "Member discount line": "Member discount"
+    },
+    "upstream": {
+      "Coupon codes": "applyCoupon",
+      "Totals breakdown": "function totals\\s*\\(",
+      "Per-category tax": "TAX_RATES"
+    }
+  }
+}

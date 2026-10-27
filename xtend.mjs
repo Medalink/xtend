@@ -144,7 +144,8 @@ function markersLeft(conflicted) {
   return left ? `conflict markers left in:\n${left}` : null
 }
 
-const RULES = `Rules: edit and create files in the working tree. To delete or move a file, use \`git rm\` or \`git mv\`. Run no other git command.`
+const RULES = `Rules: edit and create files in the working tree. To delete or move a file, use \`git rm\` or \`git mv\`. Run no other git command. You don't need to run tests: xtend runs the project's check when you finish and sends any failure back to you.`
+const SUMMARY = 'Finish with 1 to 3 plain sentences saying what you changed and why. They become the commit message.'
 
 // --- get ---------------------------------------------------------------
 
@@ -243,7 +244,7 @@ function change(cfg, request) {
   const prompt = `# Ref sheet\n${sheet()}\n\n# Request\n${request}\n
 Make this change to the repository. Prefer new files and small, isolated edits to existing ones, so future upstream merges stay easy.
 ${RULES}
-Finish with a short plain-text summary of what you changed and why.`
+${SUMMARY}`
   const r = agentUntil(cfg, prompt, () => {
     if (git('rev-parse', 'HEAD') !== before) git('reset', '-q', '--soft', before)
     git('add', '-A')
@@ -476,13 +477,17 @@ ${patch.toString('utf8').slice(0, 20000)}
 ## What is wrong right now
 ${problem}
 
-${RULES} Remove all conflict markers.`
-        problem = agentUntil(cfg, prompt, verify).problem
+${RULES} Remove all conflict markers.
+${SUMMARY}`
+        const r = agentUntil(cfg, prompt, verify)
+        problem = r.problem
+        if (r.summary) c.body = r.summary
       }
       if (problem) throw new Fail(`could not port "${c.subject}" onto upstream:\n${problem}`)
       if (!git('diff', '--cached', '--name-only')) { log(`upstream already has "${c.subject}"`); continue }
       git('commit', '-q', ...(signoff ? ['-s'] : []), '-m', c.subject, '-m', c.body || c.subject)
       c.port = git('rev-parse', 'HEAD')
+      c.files = git('diff-tree', '--no-commit-id', '--name-only', '-r', c.port).split('\n').filter(Boolean)
       c.alone = run('git', ['merge-tree', '--write-tree', `--merge-base=${c.port}^`, theirs, c.port]).ok
     }
     done = true

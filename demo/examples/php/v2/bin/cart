@@ -1,0 +1,29 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+// Usage: php bin/cart [--coupon CODE] sku=price*qty[:category] ...
+//   e.g. php bin/cart --coupon SAVE10 pen=1.50*4 apple=0.40*10:food
+require __DIR__ . '/../src/Cart.php';
+require __DIR__ . '/../src/Invoice.php';
+
+use Tally\Cart;
+
+$cart = new Cart();
+$args = array_slice($argv, 1);
+try {
+    while ($args) {
+        $arg = array_shift($args);
+        if ($arg === '--coupon') {
+            $cart->applyCoupon((string) array_shift($args));
+        } elseif (preg_match('/^(\w+)=(\d+(?:\.\d+)?)(?:\*(\d+))?(?::(\w+))?$/', $arg, $m)) {
+            $cart->addItem($m[1], Tally\parseCents($m[2]), (int) ($m[3] ?: 1), $m[4] ?? 'general');
+        } else {
+            throw new InvalidArgumentException("Bad argument: $arg");
+        }
+    }
+} catch (InvalidArgumentException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(2);
+}
+echo Tally\renderInvoice($cart);

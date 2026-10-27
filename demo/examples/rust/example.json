@@ -1,0 +1,20 @@
+{
+  "name": "logsum",
+  "lang": "Rust",
+  "about": "A small log summarizer that counts entries by level and lists the most common errors.",
+  "check": "cargo test --quiet",
+  "change": "Add a severity_score function that weights each level (ERROR 10, WARN 3, INFO 1, DEBUG 0), and make the report end with a line starting \"Severity score:\" showing the total.",
+  "upstream": "logsum 2.0: typed levels, hourly buckets, --min-level filter",
+  "kept": {
+    "yours": {
+      "Severity score function": "fn severity_score",
+      "Severity score report line": "Severity score:",
+      "Errors weigh 10": "(?:ERROR|Error).{0,24}10"
+    },
+    "upstream": {
+      "Typed level enum": "enum Level",
+      "Entry parser renamed": "fn parse_entry",
+      "Hourly buckets": "by_hour"
+    }
+  }
+}
