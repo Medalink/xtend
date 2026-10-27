@@ -1,0 +1,15 @@
+import fs from 'node:fs'
+
+const prompt = fs.readFileSync(0, 'utf8')
+if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, prompt.split('\n')[0] + '\n')
+if (process.env.FAKE_MODE === 'fail') process.exit(0)
+
+if (prompt.includes('Write a reference sheet')) {
+  fs.writeFileSync('.xtend/sheet.md', '# app\n## Extension points\n- greeting lives in app.js\n')
+} else if (prompt.includes('# Request')) {
+  fs.writeFileSync('app.js', fs.readFileSync('app.js', 'utf8').replace("'hello'", "'howdy'"))
+  console.log('Changed the greeting to howdy.')
+} else if (prompt.includes('merging new upstream')) {
+  const src = fs.readFileSync('app.js', 'utf8')
+  fs.writeFileSync('app.js', src.replace(/<<<<<<< .*\r?\n([\s\S]*?)=======\r?\n[\s\S]*?>>>>>>> .*\r?\n/g, '$1'))
+}

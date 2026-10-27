@@ -1,0 +1,11 @@
+{
+  "name": "xtend",
+  "version": "0.1.0",
+  "description": "Keep your own agent-modified version of any repo, with upstream merged in automatically.",
+  "type": "module",
+  "bin": { "xtend": "xtend.mjs" },
+  "files": ["xtend.mjs"],
+  "scripts": { "test": "node test/e2e.mjs" },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
