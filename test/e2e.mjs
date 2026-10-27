@@ -108,5 +108,115 @@ assert.match(r.stdout, /merged upstream cleanly/)
 assert.equal(r.status, 1, 'a failed push exits non-zero')
 git(fork, 'remote', 'remove', 'origin')
 
+// --- share: offering changes back upstream ---
+const MARK = '<!-- xtend offer -->'
+const hasBranch = (cwd, b) => spawnSync('git', ['rev-parse', '--verify', '-q', b], { cwd }).status === 0
+const unmoved = (head, msg) => {
+  assert.equal(git(fork, 'symbolic-ref', '--short', 'HEAD'), 'main', `${msg}: back on main`)
+  assert.equal(git(fork, 'rev-parse', 'HEAD'), head, `${msg}: HEAD unchanged`)
+  assert.equal(git(fork, 'status', '--porcelain'), '', `${msg}: clean tree`)
+}
+const preview = (extra) => JSON.parse(xtend(fork, ['share', '--json'], extra).stdout)
+
+let p = preview()
+assert.equal(p.takes, 'pr')
+assert.deepEqual(p.changes.map((c) => c.subject), ['make it say howdy'], 'only your own changes are offered, not xtend setup')
+assert.equal(p.changes[0].appliesCleanly, false, 'upstream moved under the change')
+
+let mine = git(fork, 'rev-parse', 'HEAD')
+r = xtend(fork, ['share', '1', '--yes'], { CI: 'true' })
+assert.equal(r.status, 1)
+assert.match(r.stderr, /never offers changes from CI/)
+assert.ok(!hasBranch(fork, 'xtend/offer'), 'CI builds nothing')
+r = xtend(fork, ['share', '1'])
+assert.match(r.stderr, /--yes/, 'without a terminal, offering needs --yes')
+assert.ok(!hasBranch(fork, 'xtend/offer'))
+
+r = xtend(fork, ['share', '1', '--yes'])
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /not on GitHub/)
+unmoved(mine, 'offline offer')
+assert.equal(git(fork, 'diff', '--name-only', 'upstream/main', 'xtend/offer'), 'app.js', 'the offer carries no xtend files')
+assert.match(git(fork, 'show', 'xtend/offer:app.js'), /howdy[\s\S]*everyone/, 'ported onto the latest upstream code')
+assert.match(fs.readFileSync(path.join(fork, '.git/xtend-offer.md'), 'utf8'), /git cherry-pick/)
+
+const bare = path.join(root, 'fork.git')
+git(root, 'init', '-q', '--bare', bare)
+git(fork, 'remote', 'add', 'origin', 'https://github.com/me/app.git')
+git(fork, 'remote', 'set-url', '--push', 'origin', bare)
+fs.writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfgPath)), upstream: 'https://github.com/acme/app' }))
+git(fork, 'commit', '-qam', 'upstream lives on GitHub')
+mine = git(fork, 'rev-parse', 'HEAD')
+
+const ghLog = path.join(root, 'gh.log')
+const gh = { XTEND_GH: path.join(here, 'fake-gh.mjs'), FAKE_GH_LOG: ghLog, XTEND_HOME: path.join(root, 'home') }
+const ghCalls = (verb) => fs.readFileSync(ghLog, 'utf8').trim().split('\n').map(JSON.parse).filter((c) => c.args[1] === verb)
+const offers = () => JSON.parse(fs.readFileSync(path.join(gh.XTEND_HOME, 'offers.json'), 'utf8')).length
+
+r = xtend(fork, ['share', '1', '--yes'], gh)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /opened https:\/\/github.com\/acme\/app\/pull\/7/)
+unmoved(mine, 'GitHub offer')
+const [created] = ghCalls('create')
+for (const a of ['--draft', 'acme/app', 'me:xtend/offer']) assert.ok(created.args.includes(a), `pr create gets ${a}`)
+for (const s of [MARK, 'git fetch https://github.com/me/app.git xtend/offer', 'git cherry-pick', 'Ported from']) assert.ok(created.input.includes(s), `offer body has ${s}`)
+assert.ok(hasBranch(bare, 'xtend/offer'), 'the offer branch is pushed to your fork')
+assert.equal(offers(), 1)
+
+r = xtend(fork, ['share', '1', '--yes'], { ...gh, FAKE_GH_PRS: JSON.stringify([{ url: 'https://github.com/acme/app/pull/7', state: 'OPEN', body: MARK }]) })
+assert.equal(r.status, 0, r.stderr)
+assert.equal(ghCalls('create').length, 1, 'an open offer is updated, never doubled')
+assert.equal(ghCalls('edit').length, 1)
+assert.equal(offers(), 1, 'updates do not count against the daily cap')
+
+const closed = { ...gh, FAKE_GH_PRS: JSON.stringify([{ url: 'u', state: 'CLOSED', body: created.input }]) }
+assert.equal(preview(closed).changes[0].closedBefore, true)
+r = xtend(fork, ['share', '1', '--yes'], closed)
+assert.match(r.stderr, /closed an earlier offer/, 'a change the owner closed is never offered again')
+
+const capped = { ...gh, XTEND_HOME: path.join(root, 'busy') }
+fs.mkdirSync(capped.XTEND_HOME)
+fs.writeFileSync(path.join(capped.XTEND_HOME, 'offers.json'), JSON.stringify([1, 2, 3].map((n) => ({ repo: `x/${n}`, at: Date.now() }))))
+r = xtend(fork, ['share', '1', '--yes'], capped)
+assert.match(r.stderr, /3 offers in the last day/, 'new offers are capped per day across all repos')
+
+const collab = { ...gh, FAKE_GH_REPO: JSON.stringify({ has_issues: true, pull_request_creation_policy: 'collaborators_only' }) }
+p = preview(collab)
+assert.equal(p.takes, 'issue', 'collaborator-only PRs fall back to an issue')
+assert.match(p.notes.join(), /collaborators/)
+
+git(fork, 'branch', '-D', 'xtend/offer')
+const refuses = (pattern, msg) => {
+  const res = xtend(fork, ['share', '1', '--yes'], gh)
+  assert.equal(res.status, 1, msg)
+  assert.match(res.stderr, pattern, msg)
+  assert.ok(!hasBranch(fork, 'xtend/offer'), `${msg}: nothing built`)
+  unmoved(mine, msg)
+}
+
+commitUp('CONTRIBUTING.md', '# Contributing\n\nSign off every commit (DCO).\n', 'contributing')
+assert.equal(preview(gh).signoff, true)
+refuses(/--signoff/, 'a DCO project needs your explicit --signoff')
+
+commitUp('CONTRIBUTING.md', '# Contributing\n\nWe do not accept AI-generated pull requests.\n', 'no AI')
+p = preview(gh)
+assert.equal(p.takes, null)
+assert.match(p.notes.join(), /CONTRIBUTING.md:3/, 'the reason quotes file and line')
+refuses(/takes no changes from forks/, 'an AI ban stops the offer')
+
+fs.rmSync(path.join(up, 'CONTRIBUTING.md'))
+r = xtend(up, ['sheet'])
+assert.equal(r.status, 0, r.stderr)
+assert.match(fs.readFileSync(path.join(up, 'XTEND.md'), 'utf8'), /^contributions: pr$/m, 'owner sheets get a contributions line')
+fs.appendFileSync(path.join(up, 'XTEND.md'), 'Bug fixes and translations.\n')
+git(up, 'add', '-A'), git(up, 'commit', '-qm', 'owner sheet')
+p = preview(gh)
+assert.equal(p.takes, 'pr')
+assert.equal(p.wanted, 'Bug fixes and translations.', 'the owner says what they want')
+
+commitUp('XTEND.md', '# app\n\ncontributions: none\n', 'no thanks')
+assert.equal(preview(gh).takes, null)
+refuses(/contributions: none/, 'the owner can say no')
+
 fs.rmSync(root, { recursive: true, force: true })
 console.log('e2e ok')

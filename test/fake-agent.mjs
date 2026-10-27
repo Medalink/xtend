@@ -11,7 +11,10 @@ if (mode === 'hook') {
 }
 
 if (prompt.includes('Write a reference sheet')) {
-  fs.writeFileSync('.xtend/sheet.md', '# app\n## Extension points\n- greeting lives in app.js\n')
+  fs.writeFileSync(prompt.match(/ at (\S+)\.\n/)[1], '# app\n## Extension points\n- greeting lives in app.js\n')
+} else if (prompt.includes('preparing one change')) {
+  const src = fs.readFileSync('app.js', 'utf8')
+  fs.writeFileSync('app.js', src.replace(/<<<<<<< .*\r?\n[\s\S]*?=======\r?\n([\s\S]*?)>>>>>>> .*\r?\n/g, '$1'))
 } else if (prompt.includes('# Request')) {
   fs.writeFileSync('app.js', fs.readFileSync('app.js', 'utf8').replace("'hello'", "'howdy'"))
   if (mode === 'commit') execFileSync('git', ['commit', '-qam', 'agent committed by itself'])
