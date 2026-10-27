@@ -8,10 +8,10 @@ const DIR = '.xtend'
 const CONFIG = `${DIR}/config.json`
 const FORK_SHEET = `${DIR}/sheet.md`
 const OWNER_SHEET = 'XTEND.md'
-const TRIES = 2
+const TRIES = 3
 
 const AGENTS = {
-  claude: 'claude -p --permission-mode acceptEdits',
+  claude: 'claude -p --permission-mode acceptEdits --allowedTools "Bash(git rm *),Bash(git mv *)"',
   codex: 'codex exec -s workspace-write -',
 }
 
@@ -61,13 +61,15 @@ function sheet() {
 }
 
 function requireClean() {
-  if (git('status', '--porcelain')) throw new Fail('working tree has uncommitted changes. Commit or stash them first.')
+  if (git('status', '--porcelain', '--untracked-files=all')) throw new Fail('working tree has uncommitted changes. Commit or stash them first.')
 }
 
 function pushIfFork() {
   if (!tryGit('remote', 'get-url', 'origin')) return
   const r = run('git', ['push', 'origin', 'HEAD'])
-  log(r.ok ? 'pushed to origin' : `push failed, run \`git push\` yourself:\n${r.err}`)
+  if (r.ok) return log('pushed to origin')
+  log(`push failed, run \`git push\` yourself:\n${r.err}`)
+  process.exitCode = 1
 }
 
 // Runs the agent until `verify` returns null, feeding each failure back in.
@@ -89,7 +91,7 @@ function check(cfg) {
   return r.status === 0 ? null : `\`${cfg.check}\` failed:\n${`${r.stdout}\n${r.stderr}`.trim().slice(-4000)}`
 }
 
-const RULES = `Rules: edit files in the working tree only. Never run git commit, merge, rebase, reset, checkout, stash or push.`
+const RULES = `Rules: edit and create files in the working tree. To delete or move a file, use \`git rm\` or \`git mv\`. Run no other git command.`
 
 // --- get ---------------------------------------------------------------
 
@@ -135,7 +137,7 @@ function get(src) {
 
   if (fork) {
     pushIfFork()
-    const repo = run('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']).out
+    const repo = githubSlug(git('remote', 'get-url', 'origin'))
     run('gh', ['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
     log(`daily auto-sync is on. Give it a key once: gh secret set ANTHROPIC_API_KEY -R ${repo}`)
   }
@@ -182,11 +184,13 @@ ${RULES} Write only ${target}.`
 
 function change(cfg, request) {
   requireClean()
+  const before = git('rev-parse', 'HEAD')
   const prompt = `# Ref sheet\n${sheet()}\n\n# Request\n${request}\n
 Make this change to the repository. Prefer new files and small, isolated edits to existing ones, so future upstream merges stay easy.
 ${RULES}
 Finish with a short plain-text summary of what you changed and why.`
   const r = agentUntil(cfg, prompt, () => {
+    if (git('rev-parse', 'HEAD') !== before) git('reset', '-q', '--soft', before)
     git('add', '-A')
     return git('diff', '--cached', '--name-only') ? check(cfg) : 'no files changed'
   })
@@ -218,7 +222,10 @@ function sync(cfg) {
   const verify = () => {
     if (!fs.existsSync(git('rev-parse', '--git-path', 'MERGE_HEAD'))) return 'the merge was committed or aborted; leave that to xtend'
     git('add', '-A')
-    const markers = run('git', ['grep', '--cached', '-lE', '^(<<<<<<<|>>>>>>>) ']).out
+    const markers = [
+      run('git', ['grep', '--cached', '-lE', '^(<<<<<<<|>>>>>>>) ']).out,
+      conflicted && run('git', ['grep', '--cached', '-lE', '^=======.?$', '--', ...conflicted.split('\n')]).out,
+    ].filter(Boolean).join('\n')
     if (markers) return `conflict markers left in:\n${markers}`
     return check(cfg)
   }
@@ -242,12 +249,15 @@ ${problem}
 ${RULES} Remove all conflict markers.`
     problem = agentUntil(cfg, prompt, verify).problem
   }
+  if (!problem) {
+    const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
+    if (!c.ok) problem = `git commit failed:\n${c.err || c.out}`
+  }
   if (problem) {
     git('reset', '-q', '--hard', before)
     git('clean', '-qfd')
     throw new Fail(`sync gave up, nothing changed:\n${problem}`)
   }
-  git('commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`)
   log(conflicted ? `merged upstream, agent resolved: ${conflicted.split('\n').join(', ')}` : 'merged upstream cleanly')
   pushIfFork()
 }
@@ -271,7 +281,7 @@ jobs:
           node .xtend/xtend.mjs sync
         env:
           ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
-          XTEND_AGENT: claude -p --permission-mode acceptEdits
+          XTEND_AGENT: '${AGENTS.claude}'
 `
 
 // --- main --------------------------------------------------------------
