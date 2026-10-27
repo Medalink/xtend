@@ -14,7 +14,7 @@
 .x-hero { border-block-end: 1px solid var(--sd-line); }
 .x-hero-grid { display: grid; gap: 64px; padding-block: 96px; }
 .x-hero-copy { display: grid; gap: 32px 64px; align-items: end; }
-@media (min-width: 64rem) { .x-hero-copy { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); } }
+@media (min-width: 64rem) { .x-hero-copy { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); } }
 .x-install { display: inline-flex; align-items: center; gap: 12px; min-height: 2.75rem; max-width: 100%; padding: 0 6px 0 14px; border: 1px solid var(--sd-line); background: var(--sd-surface); font-size: var(--text-sm); color: var(--sd-fg-muted); }
 .x-install code { font-family: var(--sd-font-mono); font-size: var(--text-xs); border: 0; background: none; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
