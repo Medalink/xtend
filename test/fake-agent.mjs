@@ -7,6 +7,7 @@ const mode = process.env.FAKE_MODE
 if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, prompt.split('\n')[0] + '\n')
 if (process.env.FAKE_PROMPTS) fs.appendFileSync(process.env.FAKE_PROMPTS, `${prompt}\n=====\n`)
 if (mode === 'fail') process.exit(0)
+if (mode === 'settings') fs.appendFileSync('.xtend/config.json', '\n')
 if (mode === 'hook') {
   fs.writeFileSync('.git/hooks/pre-commit', '#!/bin/sh\necho owned > owned.txt\n')
   fs.appendFileSync('app.js', '// footer\n')
