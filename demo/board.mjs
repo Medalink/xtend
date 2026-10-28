@@ -329,7 +329,7 @@ ${examples.length ? `
         <div class="x-cell">
           <span class="x-step">03</span>
           <h3 class="sd-title">No floods</h3>
-          <p class="sd-muted">A person picks every change. xTend never offers from CI and keeps one open offer per project. It never re-offers what the owner closed, and opens at most 3 offers a day.</p>
+          <p class="sd-muted">A person picks every change. xTend never offers from CI and keeps one open offer per project. It never re-offers what the owner closed.</p>
         </div>
       </div>
     </div>

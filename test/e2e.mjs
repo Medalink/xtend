@@ -181,9 +181,8 @@ git(fork, 'commit', '-qam', 'upstream lives on GitHub')
 mine = git(fork, 'rev-parse', 'HEAD')
 
 const ghLog = path.join(root, 'gh.log')
-const gh = { XTEND_GH: path.join(here, 'fake-gh.mjs'), FAKE_GH_LOG: ghLog, XTEND_HOME: path.join(root, 'home') }
+const gh = { XTEND_GH: path.join(here, 'fake-gh.mjs'), FAKE_GH_LOG: ghLog }
 const ghCalls = (verb) => fs.readFileSync(ghLog, 'utf8').trim().split('\n').map(JSON.parse).filter((c) => c.args[1] === verb)
-const offers = () => JSON.parse(fs.readFileSync(path.join(gh.XTEND_HOME, 'offers.json'), 'utf8')).length
 
 r = xtend(fork, ['share', '1', '--yes'], gh)
 assert.equal(r.status, 0, r.stderr + r.stdout)
@@ -193,24 +192,16 @@ const [created] = ghCalls('create')
 for (const a of ['--draft', 'acme/app', 'me:xtend/offer']) assert.ok(created.args.includes(a), `pr create gets ${a}`)
 for (const s of [MARK, 'git fetch https://github.com/me/app.git xtend/offer', 'git cherry-pick', 'Ported from']) assert.ok(created.input.includes(s), `offer body has ${s}`)
 assert.ok(hasBranch(bare, 'xtend/offer'), 'the offer branch is pushed to your fork')
-assert.equal(offers(), 1)
 
 r = xtend(fork, ['share', '1', '--yes'], { ...gh, FAKE_GH_PRS: JSON.stringify([{ url: 'https://github.com/acme/app/pull/7', state: 'OPEN', body: MARK }]) })
 assert.equal(r.status, 0, r.stderr)
 assert.equal(ghCalls('create').length, 1, 'an open offer is updated, never doubled')
 assert.equal(ghCalls('edit').length, 1)
-assert.equal(offers(), 1, 'updates do not count against the daily cap')
 
 const closed = { ...gh, FAKE_GH_PRS: JSON.stringify([{ url: 'u', state: 'CLOSED', body: created.input }]) }
 assert.equal(preview(closed).changes[0].closedBefore, true)
 r = xtend(fork, ['share', '1', '--yes'], closed)
 assert.match(r.stderr, /closed an earlier offer/, 'a change the owner closed is never offered again')
-
-const capped = { ...gh, XTEND_HOME: path.join(root, 'busy') }
-fs.mkdirSync(capped.XTEND_HOME)
-fs.writeFileSync(path.join(capped.XTEND_HOME, 'offers.json'), JSON.stringify([1, 2, 3].map((n) => ({ repo: `x/${n}`, at: Date.now() }))))
-r = xtend(fork, ['share', '1', '--yes'], capped)
-assert.match(r.stderr, /3 offers in the last day/, 'new offers are capped per day across all repos')
 
 const collab = { ...gh, FAKE_GH_REPO: JSON.stringify({ has_issues: true, pull_request_creation_policy: 'collaborators_only' }) }
 p = preview(collab)

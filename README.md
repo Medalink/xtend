@@ -71,7 +71,6 @@ It also refuses to add noise:
 - It never offers from CI, so the daily sync can't open anything.
 - It keeps one open offer per project. Sharing again updates that one.
 - A change the owner closed is never offered again.
-- It opens at most 3 new offers a day across all projects.
 - It asks before sending, or needs `--yes`.
 
 If upstream isn't on GitHub, you get the branch and a write-up in `.git/xtend-offer.md` to send the way the project asks.

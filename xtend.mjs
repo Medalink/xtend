@@ -352,7 +352,6 @@ ${RULES} Remove all conflict markers.`
 const OFFER_BRANCH = 'xtend/offer'
 const OFFER_MARK = '<!-- xtend offer -->'
 const MINE = ['.', ':!.xtend', ':!.github/workflows/xtend.yml']
-const DAILY_OFFERS = 3
 const CONTRIBUTIONS = `
 ## Contributions from forks
 contributions: pr
@@ -451,11 +450,6 @@ function pastOffers(slug, strict) {
   return found
 }
 const wasClosed = (past, c) => [...past.closed].some((s) => c.sha.startsWith(s))
-
-const offersFile = () => path.join(process.env.XTEND_HOME || path.join(os.homedir(), '.xtend'), 'offers.json')
-function recentOffers() {
-  try { return JSON.parse(fs.readFileSync(offersFile(), 'utf8')).filter((o) => Date.now() - o.at < 864e5) } catch { return [] }
-}
 
 function confirm(question) {
   if (!process.stdin.isTTY) throw new Fail(`${question}\nRerun with --yes to go ahead.`)
@@ -577,7 +571,6 @@ function share(cfg, args) {
   const declined = picked.filter((c) => wasClosed(past, c))
   if (declined.length) throw new Fail(`the owner closed an earlier offer of: ${declined.map((c) => c.subject).join(', ')}. xtend will not offer it again.`)
   if (policy.signoff && !flags.has('--signoff')) throw new Fail('upstream needs a DCO sign-off on every commit. Read it, then rerun with --signoff if you agree to it.')
-  if (online && !past.open && recentOffers().length >= DAILY_OFFERS) throw new Fail(`you opened ${DAILY_OFFERS} offers in the last day. xtend caps this so no one floods maintainers.`)
   requireClean()
   const where = past.open ? `update ${past.open.url}` : `open ${via === 'pr' ? 'a draft pull request' : 'an issue'} on ${slug || cfg.upstream}`
   if (!flags.has('--yes')) confirm(`Offer ${picked.map((c) => `"${c.subject}"`).join(', ')} and ${where}?`)
@@ -601,10 +594,6 @@ function share(cfg, args) {
       ? gh(['pr', 'create', '-R', slug, '--draft', '--base', cfg.branch, '--head', `${forkSlug.split('/')[0]}:${OFFER_BRANCH}`, '--title', title, '--body-file', '-'], { input: body })
       : gh(['issue', 'create', '-R', slug, '--title', title, '--body-file', '-'], { input: body })
   if (!r.ok) throw new Fail(`gh could not ${where}:\n${r.err}`)
-  if (!past.open) {
-    fs.mkdirSync(path.dirname(offersFile()), { recursive: true })
-    fs.writeFileSync(offersFile(), JSON.stringify([...recentOffers(), { repo: slug, url: r.out, at: Date.now() }], null, 2))
-  }
   log(past.open ? `updated ${past.open.url}` : `opened ${r.out}`)
 }
 
