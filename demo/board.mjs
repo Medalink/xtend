@@ -292,7 +292,7 @@ ${each((a) => `
         <div class="x-frame-head"><span class="sd-label">The same merge, done again</span><span class="sd-status" data-tone="${a.replay.agent ? 'pending' : 'success'}">${esc(memory(a))}</span></div>
         ${a.replay.agent ? `
         <ul class="sd-checks x-memory">
-          <li data-tone="success"><span>git replayed all ${a.files.conflicted.length} conflict resolution${a.files.conflicted.length === 1 ? '' : 's'}: ${a.files.conflicted.map((f) => `<code>${esc(f)}</code>`).join(', ')}</span></li>
+          <li data-tone="success"><span>git replayed ${a.files.conflicted.length === 1 ? 'the conflict resolution' : `all ${a.files.conflicted.length} conflict resolutions`} from memory:${a.files.conflicted.map((f) => `<code>${esc(f)}</code>`).join(', ')}</span></li>
           <li data-tone="pending"><span>The first merge also adapted your code to upstream's new API, in files git merges without a conflict. rerere only remembers conflicts, so the check failed and the agent fixed just that.</span></li>
         </ul>` : `
         <div class="x-race">
