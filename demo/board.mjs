@@ -83,9 +83,9 @@ const FEATURES = [
   ['Any agent', 'Claude Code, Codex, Gemini, Amp, opencode, or your own command.'],
   ['Any language', 'It runs your project\'s own check. It never parses code.'],
   ['Owners decide', 'XTEND.md, GitHub settings and CONTRIBUTING.md say what forks may send.'],
-  ['Gives back clean', 'Ports only the changes you pick onto upstream, one commit each.'],
-  ['Safe around agents', 'Git runs with hooks off. Changed git config or hooks get put back.'],
-  ['Asks before it sends', 'Nothing goes upstream without you picking it, never from CI, one open offer per project.'],
+  ['Gives back clean', 'Ports only the changes you pick onto upstream, one commit each. Never from CI, one open offer per project.'],
+  ['Safe around agents', 'Git runs with hooks off. Changed git config, hooks or xtend settings get put back.'],
+  ['Tune each step', 'Swap the agent, the prompt or a formatter per step in `~/.config/xtend`. No fork of xtend, no PR.'],
   ['No service', 'One file, no dependencies. Your GitHub fork holds everything.'],
 ]
 
