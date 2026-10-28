@@ -113,6 +113,32 @@ XTEND_AGENT=amp xtend sync                   # or just for one run
 
 Without `--agent`, `xtend get` picks the first of these that is installed. When daily sync is on, `xtend agent` rewrites `.github/workflows/xtend.yml` to match, so make any custom edits to it after you pick. The demo and every example ran on `claude`. The other presets are built from each CLI's `--help` and have not been run end to end.
 
+## Tune each step
+
+xTend runs your agent in four steps: `change`, `sync`, `port` (for `share`) and `sheet`. Each step can have its own agent, prompt and commands. Put settings for this machine in `~/.config/xtend/config.json`, so you change nothing in the repo and fork nothing of xTend's. Put settings the daily Action should use in `.xtend/config.json` and commit them.
+
+```json
+{
+  "agents": { "fast": "claude -p --model haiku --allowedTools Edit,Write" },
+  "add": "Use pnpm, never npm.",
+  "steps": {
+    "sync": { "agent": "codex -m gpt-6", "tries": 5, "after": "npx prettier --write ." },
+    "change": { "agent": "fast", "prompt": "prompts/change.md" }
+  }
+}
+```
+
+| Key | Does |
+|---|---|
+| `agent` | a preset, one of your `agents`, or any command |
+| `prompt` | your own prompt file, relative to the config file. `{{name}}` values are filled in |
+| `add` | text added to the end of xTend's prompt |
+| `after` | a command run after each agent try, before your check. Its edits are committed; its failure goes back to the agent |
+| `tries` | how many times the agent may try, 3 by default |
+| `check` | top level only: the command that gates every change and merge |
+
+A key at the top applies to every step. Under `steps.<step>` it applies to that step only. This device's file beats `.xtend/config.json`, and `XTEND_AGENT` beats both. `xtend config` shows the value each step uses and which file set it. `xtend config prompts` copies xTend's prompts next to your config and points it at them, so you can edit them in place. Set `XTEND_CONFIG_DIR` to keep the file somewhere else.
+
 ## Agents driving xTend
 
 Agents drive xTend through its CLI, so there is no MCP server to run. `xtend share --json` prints what upstream accepts and the list of changes for an agent to read. [`skills/xtend/SKILL.md`](skills/xtend/SKILL.md) is an Agent Skill for Claude Code, Codex and others. Copy it into your agent's skills folder. It tells the agent to run `xtend share` with change numbers only when you asked to contribute those changes.
@@ -124,13 +150,13 @@ It uses tools you already have. Nothing runs as a service.
 - **GitHub** holds your fork. `gh repo fork` creates it. If you turn it on, a GitHub Action in it runs `xtend sync` every day.
 - **git** does the merging. Commit messages hold the intent of each customization, and `rerere` replays any conflict git has resolved before.
 - **Your agent CLI** handles what git can't. That's Claude Code, Codex, Gemini, Amp, opencode, or any command you set. It sees the ref sheet, what you changed and why, and what upstream changed.
-- **Your check** gates every change and merge. Set `"check": "npm test"` in `.xtend/config.json`.
+- **Your check** gates every change and merge. Set `"check": "npm test"` in `.xtend/config.json`. Each step can also run a formatter or other command of yours; see [Tune each step](#tune-each-step).
 
 ## Safety
 
 - The agent edits files. The default `claude -p` command lets it edit and write files and run only `git rm` and `git mv`. Claude Code denies every other shell command, including `rm` and `cp`. `codex exec` runs in Codex's workspace-write sandbox, which allows any shell command inside the repo. Either way, xTend owns every commit, merge and push.
-- xTend runs git with hooks off, so nothing an agent plants runs inside it. Your check is the gate. If an agent changes git config, `.git/info/attributes` or `.git/hooks`, xTend puts them back and stops.
-- A sync is accepted only if the merge is still in progress, no conflict markers are left, and your check passes. xTend makes up to three tries and feeds each failure back to the agent.
+- xTend runs git with hooks off, so nothing an agent plants runs inside it. Your check is the gate. If an agent changes git config, `.git/info/attributes`, `.git/hooks`, xTend's config, its prompts, or `.xtend/xtend.mjs`, xTend puts them back and stops.
+- A sync is accepted only if the merge is still in progress, no conflict markers are left, and your check passes. xTend makes up to three tries, or your `tries`, and feeds each failure back to the agent.
 - Otherwise xTend resets to exactly where you were and exits non-zero, so the Action fails and GitHub emails you. A failed push also exits non-zero, and the next sync pushes again.
 - xTend refuses to start with uncommitted or untracked files, so a rollback can never take your work with it. Gitignored files such as `.env` are outside that rollback, which is why the default Claude command can't delete files.
 
@@ -148,7 +174,7 @@ A failed sync exits non-zero, so the run fails and GitHub emails you. GitHub's d
 
 ## Files in your fork
 
-- `.xtend/config.json` holds the upstream URL, branch, agent command and check command.
+- `.xtend/config.json` holds the upstream URL, branch, agent command and check command, plus any [step settings](#tune-each-step) the daily Action should use.
 - `.xtend/sheet.md` is the generated ref sheet. It is skipped when upstream ships `XTEND.md`.
 - `.xtend/xtend.mjs` is a copy of this tool, which the Action runs, so CI needs no install step.
 
