@@ -134,7 +134,12 @@ function loadConfig(need = true) {
       tries,
     }
   }
-  return { ...repo, check: pick('check')?.value || '', checkFrom: pick('check')?.from, steps, layers }
+  return { ...repo, check: pick('check')?.value || '', checkFrom: pick('check')?.from, steps, layers, repo }
+}
+
+// The agent the daily Action runs: the repo's own sync agent, never this device's.
+function actionAgent(repo, agent = repo.agent) {
+  return agentCommand(String(repo.steps?.sync?.agent ?? agent), repo.agents)
 }
 
 function sheet() {
@@ -743,7 +748,7 @@ function setDaily(cfg, [want]) {
   requireClean()
   if (want === 'on') {
     fs.mkdirSync(path.dirname(WORKFLOW_FILE), { recursive: true })
-    fs.writeFileSync(WORKFLOW_FILE, workflow(cfg.agent, cfg.agents))
+    fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo), cfg.agents))
     git('add', WORKFLOW_FILE)
   } else if (on) git('rm', '-q', WORKFLOW_FILE)
   if (run('git', ['diff', '--cached', '--quiet']).ok) log(`daily sync is already ${want}`)
@@ -751,7 +756,7 @@ function setDaily(cfg, [want]) {
   pushIfFork()
   const repo = origin && githubSlug(origin)
   if (want === 'on' && repo && hasGh()) gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
-  log(want === 'on' ? `daily sync is on. ${repo ? actionNote(cfg.agent, repo, cfg.agents) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
+  log(want === 'on' ? `daily sync is on. ${repo ? actionNote(actionAgent(cfg.repo), repo, cfg.agents) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
 }
 
 function setAgent(cfg, spec) {
@@ -763,12 +768,12 @@ function setAgent(cfg, spec) {
   requireClean()
   const agent = agentCommand(spec.join(' '), cfg.agents)
   fs.writeFileSync(CONFIG, JSON.stringify({ ...JSON.parse(fs.readFileSync(CONFIG, 'utf8')), agent }, null, 2) + '\n')
-  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(agent, cfg.agents))
+  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo, agent), cfg.agents))
   git('add', '-A')
   git('commit', '-q', '-m', `xtend: use ${presetOf(agent, cfg.agents)[0]} as the agent`)
   log(`agent is now: ${agent}`)
   const repo = fs.existsSync(WORKFLOW_FILE) && githubSlug(git('remote', 'get-url', 'origin'))
-  if (repo) log(actionNote(agent, repo, cfg.agents))
+  if (repo) log(actionNote(actionAgent(cfg.repo, agent), repo, cfg.agents))
   pushIfFork()
 }
 

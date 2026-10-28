@@ -122,7 +122,7 @@ xTend runs your agent in four steps: `change`, `sync`, `port` (for `share`) and 
   "agents": { "fast": "claude -p --model haiku --allowedTools Edit,Write" },
   "add": "Use pnpm, never npm.",
   "steps": {
-    "sync": { "agent": "codex -m gpt-6", "tries": 5, "after": "npx prettier --write ." },
+    "sync": { "agent": "codex -m gpt-6", "tries": 5, "after": "npx prettier --write src" },
     "change": { "agent": "fast", "prompt": "prompts/change.md" }
   }
 }
@@ -137,7 +137,7 @@ xTend runs your agent in four steps: `change`, `sync`, `port` (for `share`) and 
 | `tries` | how many times the agent may try, 3 by default |
 | `check` | top level only: the command that gates every change and merge |
 
-A key at the top applies to every step. Under `steps.<step>` it applies to that step only. This device's file beats `.xtend/config.json`, and `XTEND_AGENT` beats both. `xtend config` shows the value each step uses and which file set it. `xtend config prompts` copies xTend's prompts next to your config and points it at them, so you can edit them in place. Set `XTEND_CONFIG_DIR` to keep the file somewhere else.
+A key at the top applies to every step. Under `steps.<step>` it applies to that step only. This device's file beats `.xtend/config.json`, and `XTEND_AGENT` beats both. `xtend config` shows the value each step uses and which file set it. `xtend config prompts` copies xTend's prompts next to your config and points it at them, so you can edit them in place. Set `XTEND_CONFIG_DIR` to keep the file somewhere else. After you change the committed sync agent, run `xtend daily on` again so the Action installs it.
 
 ## Agents driving xTend
 
