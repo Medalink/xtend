@@ -22,11 +22,13 @@ const AGENTS = {
 }
 
 // "codex -m gpt-6" becomes the codex preset plus "-m gpt-6"; anything else is used as written.
-function agentCommand(spec) {
+// `agents` are your own presets from config: a command, or { cmd, install, key } like the ones above.
+function agentCommand(spec, agents = {}) {
   const [first, ...more] = spec.trim().split(/\s+/)
-  return AGENTS[first] ? [AGENTS[first].cmd, ...more].join(' ') : spec.trim()
+  const known = agents[first]?.cmd ?? agents[first] ?? AGENTS[first]?.cmd
+  return known && !spec.trim().startsWith(known) ? [known, ...more].join(' ') : spec.trim()
 }
-const presetOf = (cmd) => Object.entries(AGENTS).find(([, p]) => cmd.split(' ')[0] === p.cmd.split(' ')[0]) || [cmd.split(' ')[0], {}]
+const presetOf = (cmd, agents = {}) => Object.entries({ ...AGENTS, ...agents }).find(([, p]) => p.cmd && cmd.split(' ')[0] === p.cmd.split(' ')[0]) || [cmd.split(' ')[0], {}]
 
 const HELP = `xtend: keep your own version of any repo, with upstream merged in for you.
 
@@ -40,6 +42,8 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
   xtend share <n>... [--yes]            offer those changes upstream, the way the owner asks for them
   xtend agent [preset or command]       show or change the agent, e.g. \`xtend agent codex -m gpt-6\`
   xtend daily [on | off]                show, add or remove the GitHub Action that runs xtend sync every day
+  xtend config [--json]                 each step's agent, prompt and commands, and which file set them
+  xtend config prompts [<step>...]      copy the prompts to this device to edit: change, sync, port, sheet
 
 Owners: run \`xtend sheet\` in your repo and commit XTEND.md. Nothing else is needed.
 Its \`contributions:\` line (pr, issue or none) decides what forks may send back.`
@@ -83,13 +87,55 @@ function shell(cmd, input) {
   }
 }
 
-function loadConfig() {
-  if (!fs.existsSync(CONFIG)) throw new Fail(`no ${CONFIG} here. Run \`xtend get <repo>\` first.`)
-  const cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8'))
-  return { ...cfg, agent: process.env.XTEND_AGENT ? agentCommand(process.env.XTEND_AGENT) : cfg.agent }
+const detectAgent = () => (Object.values(AGENTS).find((p) => has(p.cmd.split(' ')[0])) || AGENTS.claude).cmd
+const defaultAgent = () => (process.env.XTEND_AGENT ? agentCommand(process.env.XTEND_AGENT) : detectAgent())
+const deviceFile = () => path.join(process.env.XTEND_CONFIG_DIR || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'xtend'), 'config.json')
+const STEP_KEYS = ['agent', 'prompt', 'add', 'after', 'tries']
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch (e) { throw new Fail(`${file}: ${e.message}`) }
 }
 
-const defaultAgent = () => (process.env.XTEND_AGENT ? agentCommand(process.env.XTEND_AGENT) : null) || (Object.values(AGENTS).find((p) => has(p.cmd.split(' ')[0])) || AGENTS.claude).cmd
+// Settings come from xtend, then the repo's .xtend/config.json (the only file the daily Action sees), then this device's config.json, then XTEND_AGENT.
+// A later one wins. A key at the top of a file applies to every step; under steps.<step> it applies to that step only, and wins inside that file.
+function loadConfig(need = true) {
+  if (need && !fs.existsSync(CONFIG)) throw new Fail(`no ${CONFIG} here. Run \`xtend get <repo>\` first.`)
+  const repo = fs.existsSync(CONFIG) ? readJson(CONFIG) : {}
+  const layers = [[CONFIG, CONFIG], ['this device', deviceFile()]].filter(([, f]) => fs.existsSync(f)).map(([from, file]) => ({ from, file: path.resolve(file), data: readJson(file) }))
+  for (const { file, data } of layers) {
+    for (const [name, s] of Object.entries(data.steps || {})) {
+      if (!PROMPTS[name]) throw new Fail(`${file}: there is no step "${name}". Steps: ${Object.keys(PROMPTS).join(', ')}`)
+      const bad = Object.keys(s).filter((k) => !STEP_KEYS.includes(k))
+      if (bad.length) throw new Fail(`${file}: steps.${name} can set ${STEP_KEYS.join(', ')}, not ${bad.join(', ')}`)
+    }
+  }
+  const agents = Object.assign({}, ...layers.map((l) => l.data.agents))
+  const pick = (key, name) => {
+    for (const l of [...layers].reverse()) {
+      const v = (name && l.data.steps?.[name]?.[key]) ?? (key === 'prompt' ? undefined : l.data[key])
+      if (v !== undefined && v !== '') return { value: v, from: l.from, file: l.file }
+    }
+  }
+  let detected
+  const steps = {}
+  for (const name of Object.keys(PROMPTS)) {
+    const agent = process.env.XTEND_AGENT ? { value: process.env.XTEND_AGENT, from: 'XTEND_AGENT' } : pick('agent', name) || { value: (detected ||= detectAgent()), from: 'xtend' }
+    const prompt = pick('prompt', name)
+    const tries = pick('tries', name) || { value: TRIES, from: 'xtend' }
+    if (!Number.isInteger(tries.value) || tries.value < 1) throw new Fail(`${tries.file}: tries must be a whole number above 0`)
+    if (prompt) prompt.value = path.resolve(path.dirname(prompt.file), prompt.value)
+    if (prompt && !fs.existsSync(prompt.value)) throw new Fail(`${prompt.file}: the ${name} prompt ${prompt.value} does not exist`)
+    steps[name] = {
+      agent: { ...agent, value: agentCommand(String(agent.value), agents) },
+      prompt: prompt || { value: 'built-in', from: 'xtend' },
+      template: prompt ? fs.readFileSync(prompt.value, 'utf8') : PROMPTS[name],
+      add: pick('add', name),
+      after: pick('after', name),
+      tries,
+    }
+  }
+  return { ...repo, check: pick('check')?.value || '', checkFrom: pick('check')?.from, steps, layers }
+}
 
 function sheet() {
   for (const f of [OWNER_SHEET, FORK_SHEET]) if (fs.existsSync(f)) return fs.readFileSync(f, 'utf8')
@@ -108,11 +154,9 @@ function pushIfFork() {
   process.exitCode = 1
 }
 
-// Git config, attributes and hooks steer every later git command, xtend's and yours, so an agent must not change them.
-function gitSnapshot() {
-  const hooks = path.join(git('rev-parse', '--git-common-dir'), 'hooks')
-  const fixed = ['config', 'config.worktree', 'info/attributes'].map((f) => git('rev-parse', '--git-path', f))
-  const hookEntries = () => (fs.existsSync(hooks) ? fs.readdirSync(hooks).map((f) => path.join(hooks, f)) : [])
+// Saves these files and the entries of these directories. The function it returns puts back whatever changed and says whether anything did.
+function snapshot(fixed, dirs = []) {
+  const hookEntries = () => dirs.flatMap((d) => (fs.existsSync(d) ? fs.readdirSync(d).map((f) => path.join(d, f)) : []))
   const read = (p) => {
     const s = fs.lstatSync(p, { throwIfNoEntry: false })
     return !s ? null : s.isFile() ? fs.readFileSync(p) : `${s.isSymbolicLink() ? 'link' : 'dir'}:${s.isSymbolicLink() ? fs.readlinkSync(p) : ''}`
@@ -136,26 +180,43 @@ function gitSnapshot() {
   }
 }
 
-// Runs the agent until `verify` returns null, feeding each failure back in.
-function agentUntil(cfg, prompt, verify) {
+// Git config, attributes and hooks steer every later git command, xtend's and yours, so an agent must not change them.
+const gitSnapshot = () => snapshot(['config', 'config.worktree', 'info/attributes'].map((f) => git('rev-parse', '--git-path', f)), [path.join(git('rev-parse', '--git-common-dir'), 'hooks')])
+// Nor xtend's settings, its prompts, or the copy of xtend the daily Action runs.
+const settingsSnapshot = (cfg) => snapshot([...new Set([CONFIG, `${DIR}/xtend.mjs`, deviceFile(), ...Object.values(cfg.steps).map((s) => s.prompt.file && s.prompt.value).filter(Boolean)].map((f) => path.resolve(f)))])
+
+// Fills each {{name}} in one pass, so text inside the values is never read as a placeholder.
+function render(template, vars, where) {
+  return template.replace(/\{\{(\w+)\}\}/g, (m, k) => {
+    if (Object.hasOwn(vars, k)) return vars[k]
+    throw new Fail(`${where} uses ${m}. This step has ${Object.keys(vars).map((v) => `{{${v}}}`).join(' ')}`)
+  })
+}
+
+// Runs the step's agent until `verify` returns null, feeding each failure back in. The step's `after` command runs after every attempt, before `verify`.
+function agentUntil(cfg, step, vars, verify) {
+  const { agent, prompt: source, template, add, after, tries } = cfg.steps[step]
+  const prompt = render(template, vars, source.file ? source.value : `the built-in ${step} prompt`) + (add ? `\n\n${add.value}` : '')
   let problem = null
-  for (let i = 1; i <= TRIES; i++) {
-    log(`asking agent (${cfg.agent.split(' ')[0]}), try ${i}/${TRIES}`)
+  for (let i = 1; i <= tries.value; i++) {
+    log(`asking agent (${agent.value.split(' ')[0]}), try ${i}/${tries.value}`)
     const restoreGit = gitSnapshot()
-    const r = shell(cfg.agent, problem ? `${prompt}\n\n## Your last attempt failed this check\n${problem}` : prompt)
+    const restoreSettings = settingsSnapshot(cfg)
+    const r = shell(agent.value, problem ? `${prompt}\n\n## Your last attempt failed this check\n${problem}` : prompt)
     if (restoreGit()) return { problem: 'the agent changed git config, attributes or hooks; xtend restored them and stopped' }
+    if (restoreSettings()) return { problem: "the agent changed xtend's settings or prompts; xtend restored them and stopped" }
     if (!r.ok) return { problem: 'agent exited with an error', summary: r.out }
-    problem = verify()
+    problem = (after && command(after.value)) || verify()
     if (!problem) return { problem: null, summary: r.out }
   }
   return { problem }
 }
 
-function check(cfg) {
-  if (!cfg.check) return null
-  const r = spawnSync(cfg.check, { shell: true, encoding: 'utf8', maxBuffer: 64 << 20 })
-  return r.status === 0 ? null : `\`${cfg.check}\` failed:\n${`${r.stdout}\n${r.stderr}`.trim().slice(-4000)}`
+function command(cmd) {
+  const r = spawnSync(cmd, { shell: true, encoding: 'utf8', maxBuffer: 64 << 20 })
+  return r.status === 0 ? null : `\`${cmd}\` failed:\n${`${r.stdout}\n${r.stderr}`.trim().slice(-4000)}`
 }
+const check = (cfg) => (cfg.check ? command(cfg.check) : null)
 
 // rerere replays resolutions it recorded before, but leaves those files unmerged. Stage them, so only the rest goes to the agent.
 // If the agent later has to change a replayed file, that memory was wrong. git can't reliably forget one file's resolution, so wrong() drops them all.
@@ -188,6 +249,62 @@ function markersLeft(conflicted) {
 const RULES = `Rules: edit and create files in the working tree. To delete or move a file, use \`git rm\` or \`git mv\`. Run no other git command. You don't need to run tests: xtend runs the project's check when you finish and sends any failure back to you.`
 const SUMMARY = 'Finish with 1 to 3 plain sentences saying what you changed and why. They become the commit message.'
 
+// The prompt for each step. {{name}} is filled in when xtend runs it. `xtend config prompts` writes these out to edit.
+const PROMPTS = {
+  sheet: `Write a reference sheet for coding agents that will customize a private copy of this repository, at {{target}}.
+Read the code first. Keep it under 150 lines of Markdown. Be concrete: real paths, real commands, no filler.
+
+Sections:
+# <project name>
+## What it is (2-3 sentences)
+## Map (key directories and files, one line each)
+## Build, run, test (exact commands)
+## Extension points (where to add common kinds of changes, which file and which pattern to copy)
+## Conventions (naming, style, patterns new code must follow)
+## Hot zones (files upstream changes often; local edits there should stay small and isolated)
+
+Most-changed files in recent history (commits, path):
+{{hot}}
+
+${RULES} Write only {{target}}.`,
+  change: `# Ref sheet\n{{sheet}}\n\n# Request\n{{request}}\n
+Make this change to the repository. Prefer new files and small, isolated edits to existing ones, so future upstream merges stay easy.
+${RULES}
+${SUMMARY}`,
+  sync: `# Ref sheet\n{{sheet}}\n
+# Task
+You are merging new upstream changes into a customized copy of this project. A git merge is in progress.
+Keep every upstream change AND keep every local customization working. When they collide, re-apply the local intent on top of the new upstream code.
+
+## Local customizations (their intent, newest first)
+{{ours}}
+
+## Incoming upstream changes
+{{incoming}}
+
+## What is wrong right now
+{{problem}}
+
+${RULES} Remove all conflict markers.`,
+  port: `# Ref sheet\n{{sheet}}\n
+# Task
+You are preparing one change from a customized fork so the upstream owner can take it. The working tree is upstream's latest code.
+Re-apply this change on top of it. Leave upstream's code as it is wherever this change does not need to touch it, and bring in no other customization.
+
+## The change
+{{subject}}
+{{body}}
+
+## Its original diff
+{{diff}}
+
+## What is wrong right now
+{{problem}}
+
+${RULES} Remove all conflict markers.
+${SUMMARY}`,
+}
+
 // --- get ---------------------------------------------------------------
 
 function githubSlug(src) {
@@ -218,10 +335,11 @@ function get(args) {
 
   tryGit('remote', 'set-head', 'upstream', '--auto')
   const branch = git('rev-parse', '--abbrev-ref', 'upstream/HEAD').replace(/^upstream\//, '')
-  const cfg = { upstream: git('remote', 'get-url', 'upstream'), branch, agent, check: '' }
+  const setup = { upstream: git('remote', 'get-url', 'upstream'), branch, agent, check: '' }
 
   fs.mkdirSync(DIR, { recursive: true })
-  fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + '\n')
+  fs.writeFileSync(CONFIG, JSON.stringify(setup, null, 2) + '\n')
+  const cfg = loadConfig()
   fs.copyFileSync(fileURLToPath(import.meta.url), `${DIR}/xtend.mjs`)
   git('add', '-A')
   git('commit', '-q', '-m', 'xtend: set up')
@@ -249,23 +367,8 @@ function hotFiles() {
 
 function writeSheet(cfg) {
   const target = fs.existsSync(CONFIG) ? FORK_SHEET : OWNER_SHEET
-  const prompt = `Write a reference sheet for coding agents that will customize a private copy of this repository, at ${target}.
-Read the code first. Keep it under 150 lines of Markdown. Be concrete: real paths, real commands, no filler.
-
-Sections:
-# <project name>
-## What it is (2-3 sentences)
-## Map (key directories and files, one line each)
-## Build, run, test (exact commands)
-## Extension points (where to add common kinds of changes, which file and which pattern to copy)
-## Conventions (naming, style, patterns new code must follow)
-## Hot zones (files upstream changes often; local edits there should stay small and isolated)
-
-Most-changed files in recent history (commits, path):
-${hotFiles() || '(no history)'}
-
-${RULES} Write only ${target}.`
-  const r = agentUntil(cfg, prompt, () => (fs.existsSync(target) ? null : `${target} was not written`))
+  const vars = { target, hot: hotFiles() || '(no history)' }
+  const r = agentUntil(cfg, 'sheet', vars, () => (fs.existsSync(target) ? null : `${target} was not written`))
   if (r.problem) throw new Fail(`could not write ${target}: ${r.problem}`)
   if (target === OWNER_SHEET && !/^contributions:/m.test(fs.readFileSync(target, 'utf8'))) fs.appendFileSync(target, CONTRIBUTIONS)
   if (fs.existsSync(CONFIG)) {
@@ -280,11 +383,8 @@ ${RULES} Write only ${target}.`
 function change(cfg, request) {
   requireClean()
   const before = git('rev-parse', 'HEAD')
-  const prompt = `# Ref sheet\n${sheet()}\n\n# Request\n${request}\n
-Make this change to the repository. Prefer new files and small, isolated edits to existing ones, so future upstream merges stay easy.
-${RULES}
-${SUMMARY}`
-  const r = agentUntil(cfg, prompt, () => {
+  const vars = { sheet: sheet(), request }
+  const r = agentUntil(cfg, 'change', vars, () => {
     if (git('rev-parse', 'HEAD') !== before) git('reset', '-q', '--soft', before)
     git('add', '-A')
     return git('diff', '--cached', '--name-only') ? check(cfg) : 'no files changed'
@@ -361,22 +461,8 @@ function sync(cfg) {
 }
 
 function resolveMerge(cfg, { ours, incoming, problem }, verify) {
-  const prompt = `# Ref sheet\n${sheet()}\n
-# Task
-You are merging new upstream changes into a customized copy of this project. A git merge is in progress.
-Keep every upstream change AND keep every local customization working. When they collide, re-apply the local intent on top of the new upstream code.
-
-## Local customizations (their intent, newest first)
-${ours || '(none recorded)'}
-
-## Incoming upstream changes
-${incoming}
-
-## What is wrong right now
-${problem}
-
-${RULES} Remove all conflict markers.`
-  return agentUntil(cfg, prompt, verify).problem
+  const vars = { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem }
+  return agentUntil(cfg, 'sync', vars, verify).problem
 }
 
 // --- share -------------------------------------------------------------
@@ -514,24 +600,8 @@ function port(cfg, picked, theirs, signoff) {
       let problem = applied.ok || (conflicted && !open) ? verify() : conflicted ? `conflicts in:\n${open}` : `the diff did not apply:\n${applied.err}`
       if (problem && reused.length) problem = `${replayed(reused)}\n\n${problem}`
       if (problem) {
-        const prompt = `# Ref sheet\n${ref}\n
-# Task
-You are preparing one change from a customized fork so the upstream owner can take it. The working tree is upstream's latest code.
-Re-apply this change on top of it. Leave upstream's code as it is wherever this change does not need to touch it, and bring in no other customization.
-
-## The change
-${c.subject}
-${c.body}
-
-## Its original diff
-${patch.toString('utf8').slice(0, 20000)}
-
-## What is wrong right now
-${problem}
-
-${RULES} Remove all conflict markers.
-${SUMMARY}`
-        const r = agentUntil(cfg, prompt, verify)
+        const vars = { sheet: ref, subject: c.subject, body: c.body, diff: patch.toString('utf8').slice(0, 20000), problem }
+        const r = agentUntil(cfg, 'port', vars, verify)
         problem = r.problem
         if (r.summary) c.body = r.summary
       }
@@ -565,7 +635,7 @@ function offerBody(cfg, policy, via, ported, forkSlug) {
     via === 'pr' && policy.template.trim(),
     `Changes from a fork of this project, offered back in case you want any of them. Each one is a single commit on \`${cfg.branch}\`. ${via === 'pr' ? 'Merge them all, or take' : 'Take'} any one with the commands under it.`,
     ...items,
-    `A person picked these. xTend ported them onto your latest code with \`${cfg.agent.split(' ')[0]}\`${cfg.check ? ` and ran \`${cfg.check}\`` : ''}. If you close this, xTend will not offer these changes again.`,
+    `A person picked these. xTend ported them onto your latest code with \`${cfg.steps.port.agent.value.split(' ')[0]}\`${cfg.check ? ` and ran \`${cfg.check}\`` : ''}. If you close this, xTend will not offer these changes again.`,
   ].filter(Boolean).join('\n\n')
 }
 
@@ -637,8 +707,8 @@ function share(cfg, args) {
 
 const WORKFLOW_FILE = '.github/workflows/xtend.yml'
 
-function workflow(agent) {
-  const [, p] = presetOf(agent)
+function workflow(agent, agents) {
+  const [, p] = presetOf(agent, agents)
   return `name: xtend sync
 on:
   schedule: [{ cron: '17 6 * * *' }]
@@ -658,8 +728,8 @@ ${p.install ? `      - run: npm i -g ${p.install}\n` : ''}      - run: |
 ${p.key ? `        env:\n          ${p.key}: \${{ secrets.${p.key} }}\n` : ''}`
 }
 
-function actionNote(agent, repo) {
-  const [name, p] = presetOf(agent)
+function actionNote(agent, repo, agents) {
+  const [name, p] = presetOf(agent, agents)
   if (p.key) return `Give it a key once: gh secret set ${p.key} -R ${repo}`
   return `Add the install step and API key that ${name} needs to ${WORKFLOW_FILE}.`
 }
@@ -673,7 +743,7 @@ function setDaily(cfg, [want]) {
   requireClean()
   if (want === 'on') {
     fs.mkdirSync(path.dirname(WORKFLOW_FILE), { recursive: true })
-    fs.writeFileSync(WORKFLOW_FILE, workflow(cfg.agent))
+    fs.writeFileSync(WORKFLOW_FILE, workflow(cfg.agent, cfg.agents))
     git('add', WORKFLOW_FILE)
   } else if (on) git('rm', '-q', WORKFLOW_FILE)
   if (run('git', ['diff', '--cached', '--quiet']).ok) log(`daily sync is already ${want}`)
@@ -681,24 +751,59 @@ function setDaily(cfg, [want]) {
   pushIfFork()
   const repo = origin && githubSlug(origin)
   if (want === 'on' && repo && hasGh()) gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
-  log(want === 'on' ? `daily sync is on. ${repo ? actionNote(cfg.agent, repo) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
+  log(want === 'on' ? `daily sync is on. ${repo ? actionNote(cfg.agent, repo, cfg.agents) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
 }
 
 function setAgent(cfg, spec) {
   if (!spec.length) {
-    console.log(`agent: ${cfg.agent}\n\npresets: ${Object.keys(AGENTS).join(', ')}\nset one: xtend agent codex -m <model>, or any command that reads the prompt on stdin or from {file}`)
+    const here = [...new Set(Object.values(cfg.steps).map((s) => s.agent.value))]
+    console.log(`agent: ${cfg.agent}${here.join() === cfg.agent ? '' : `\non this device: ${here.join(', ')} (see xtend config)`}\n\npresets: ${Object.keys(AGENTS).join(', ')}\nset one: xtend agent codex -m <model>, or any command that reads the prompt on stdin or from {file}`)
     return
   }
   requireClean()
-  const agent = agentCommand(spec.join(' '))
+  const agent = agentCommand(spec.join(' '), cfg.agents)
   fs.writeFileSync(CONFIG, JSON.stringify({ ...JSON.parse(fs.readFileSync(CONFIG, 'utf8')), agent }, null, 2) + '\n')
-  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(agent))
+  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(agent, cfg.agents))
   git('add', '-A')
-  git('commit', '-q', '-m', `xtend: use ${presetOf(agent)[0]} as the agent`)
+  git('commit', '-q', '-m', `xtend: use ${presetOf(agent, cfg.agents)[0]} as the agent`)
   log(`agent is now: ${agent}`)
   const repo = fs.existsSync(WORKFLOW_FILE) && githubSlug(git('remote', 'get-url', 'origin'))
-  if (repo) log(actionNote(agent, repo))
+  if (repo) log(actionNote(agent, repo, cfg.agents))
   pushIfFork()
+}
+
+// --- config ------------------------------------------------------------
+
+function config(args) {
+  if (args[0] === 'prompts') return exportPrompts(args.slice(1))
+  if (args.length && args.join() !== '--json') throw new Fail('usage: xtend config [--json] | xtend config prompts [<step>...]')
+  const cfg = loadConfig(false)
+  const steps = Object.fromEntries(Object.entries(cfg.steps).map(([name, s]) => [name, Object.fromEntries(STEP_KEYS.filter((k) => s[k]).map((k) => [k, { value: s[k].value, from: s[k].from }]))]))
+  const check = { value: cfg.check, from: cfg.checkFrom || 'xtend' }
+  if (args[0] === '--json') return console.log(JSON.stringify({ files: { repo: path.resolve(CONFIG), device: deviceFile() }, check, steps }, null, 2))
+  const local = (v) => (v.from === CONFIG || v.from === 'xtend' ? '' : ', not seen by the daily Action')
+  const line = (k, v) => `  ${k.padEnd(7)}${v.value === '' ? '(none)' : v.value}  (${v.from}${local(v)})`
+  console.log(`later wins: xtend, ${CONFIG}, this device (${deviceFile()}), XTEND_AGENT\n\n${line('check', check)}`)
+  for (const [name, s] of Object.entries(steps)) console.log(`\n${name}\n${Object.entries(s).map(([k, v]) => line(k, v)).join('\n')}`)
+}
+
+// Writes xtend's prompts next to this device's config.json and points it at them, so editing a file changes that step.
+function exportPrompts(names) {
+  names = names.length ? names : Object.keys(PROMPTS)
+  const unknown = names.filter((n) => !PROMPTS[n])
+  if (unknown.length) throw new Fail(`there is no step ${unknown.join(', ')}. Steps: ${Object.keys(PROMPTS).join(', ')}`)
+  const file = deviceFile()
+  const data = fs.existsSync(file) ? readJson(file) : {}
+  fs.mkdirSync(path.join(path.dirname(file), 'prompts'), { recursive: true })
+  for (const name of names) {
+    const out = path.join(path.dirname(file), 'prompts', `${name}.md`)
+    if (fs.existsSync(out)) log(`kept ${out}`)
+    else { fs.writeFileSync(out, PROMPTS[name]); log(`wrote ${out}`) }
+    data.steps ??= {}
+    data.steps[name] = { prompt: `prompts/${name}.md`, ...data.steps[name] }
+  }
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n')
+  log(`${file} uses them now. Edit them freely; {{name}} is filled in when the step runs.`)
 }
 
 // --- main --------------------------------------------------------------
@@ -711,7 +816,8 @@ try {
   else if (verb === 'daily') setDaily(loadConfig(), rest)
   else if (verb === 'sync') sync(loadConfig())
   else if (verb === 'share') share(loadConfig(), rest)
-  else if (verb === 'sheet') writeSheet(fs.existsSync(CONFIG) ? loadConfig() : { agent: defaultAgent() })
+  else if (verb === 'sheet') writeSheet(loadConfig(false))
+  else if (verb === 'config') config(rest)
   else change(loadConfig(), [verb, ...rest].join(' '))
 } catch (e) {
   if (!(e instanceof Fail)) throw e

@@ -36,6 +36,8 @@ const fork = path.join(home, spec.name)
 const sample = path.join(root, 'sample.txt')
 if (spec.sample) fs.writeFileSync(sample, spec.sample)
 const steps = []
+// A clean device: your own ~/.config/xtend settings stay out of the demo.
+process.env.XTEND_CONFIG_DIR = path.join(root, 'device')
 
 function exec(cwd, cmd, args, { shell = false, env = {} } = {}) {
   const t0 = Date.now()

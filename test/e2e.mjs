@@ -9,7 +9,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const XTEND = path.join(here, '..', 'xtend.mjs')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xtend-e2e-'))
 const agentLog = path.join(root, 'agent.log')
-const env = { ...process.env, XTEND_AGENT: `node "${path.join(here, 'fake-agent.mjs')}"`, FAKE_LOG: agentLog }
+const env = { ...process.env, XTEND_AGENT: `node "${path.join(here, 'fake-agent.mjs')}"`, FAKE_LOG: agentLog, XTEND_CONFIG_DIR: path.join(root, 'device') }
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 const xtend = (cwd, args, extra = {}) =>
