@@ -30,14 +30,16 @@ const presetOf = (cmd) => Object.entries(AGENTS).find(([, p]) => cmd.split(' ')[
 
 const HELP = `xtend: keep your own version of any repo, with upstream merged in for you.
 
-  xtend get <owner/repo | url | path>   fork, clone, write the ref sheet, turn on auto-sync
+  xtend get <owner/repo | url | path>   fork, clone and write the ref sheet
       [--agent <preset or command>]     claude, codex, gemini, amp, opencode, or your own command
+      [--daily]                         also turn on the daily sync Action
   xtend "<what you want>"               your agent makes the change and commits it
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sheet                           (re)write the ref sheet agents read before editing
   xtend share [--json]                  what upstream accepts, and which of your changes you could offer
   xtend share <n>... [--yes]            offer those changes upstream, the way the owner asks for them
   xtend agent [preset or command]       show or change the agent, e.g. \`xtend agent codex -m gpt-6\`
+  xtend daily [on | off]                show, add or remove the GitHub Action that runs xtend sync every day
 
 Owners: run \`xtend sheet\` in your repo and commit XTEND.md. Nothing else is needed.
 Its \`contributions:\` line (pr, issue or none) decides what forks may send back.`
@@ -45,12 +47,12 @@ Its \`contributions:\` line (pr, issue or none) decides what forks may send back
 class Fail extends Error {}
 
 // Hooks would run code an agent planted inside xtend's own git commands, so every git that xtend starts runs without them. Your check is the gate.
+// rerere is on for every git xtend starts, in CI too, without touching .git/config.
 const configs = Number(process.env.GIT_CONFIG_COUNT || 0)
-Object.assign(process.env, {
-  GIT_CONFIG_COUNT: String(configs + 1),
-  [`GIT_CONFIG_KEY_${configs}`]: 'core.hooksPath',
-  [`GIT_CONFIG_VALUE_${configs}`]: process.platform === 'win32' ? 'NUL' : '/dev/null',
-})
+for (const [i, [key, value]] of [['core.hooksPath', process.platform === 'win32' ? 'NUL' : '/dev/null'], ['rerere.enabled', 'true']].entries()) {
+  Object.assign(process.env, { [`GIT_CONFIG_KEY_${configs + i}`]: key, [`GIT_CONFIG_VALUE_${configs + i}`]: value })
+}
+process.env.GIT_CONFIG_COUNT = String(configs + 2)
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 << 20, ...opts })
@@ -155,6 +157,20 @@ function check(cfg) {
   return r.status === 0 ? null : `\`${cfg.check}\` failed:\n${`${r.stdout}\n${r.stderr}`.trim().slice(-4000)}`
 }
 
+// rerere replays resolutions it recorded before, but leaves those files unmerged. Stage them, so only the rest goes to the agent.
+function replay(conflicted) {
+  const open = conflicted && run('git', ['rerere', 'remaining']).out
+  const reused = conflicted ? conflicted.split('\n').filter((f) => !open.split('\n').includes(f)) : []
+  if (reused.length) git('add', '--', ...reused)
+  return { open, reused }
+}
+
+// A replayed resolution that fails the check must not come back. git can't reliably forget one file's resolution, so drop them all.
+function unreplay(reused) {
+  git('checkout', '-m', '--', ...reused)
+  fs.rmSync(git('rev-parse', '--git-path', 'rr-cache'), { recursive: true, force: true })
+}
+
 // Call after `git add -A`. A lone ======= line only counts in files that had conflicts.
 function markersLeft(conflicted) {
   const left = [
@@ -175,10 +191,12 @@ function githubSlug(src) {
 }
 
 function get(args) {
+  const daily = args.includes('--daily')
+  args = args.filter((a) => a !== '--daily')
   const at = args.indexOf('--agent')
   const agent = at >= 0 ? agentCommand(args.splice(at, 2)[1] || '') : defaultAgent()
   const src = args[0]
-  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>]')
+  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily]')
   const slug = githubSlug(src)
   const name = path.basename(slug || src).replace(/\.git$/, '')
   if (fs.existsSync(name)) throw new Fail(`${name} already exists`)
@@ -197,26 +215,19 @@ function get(args) {
   const branch = git('rev-parse', '--abbrev-ref', 'upstream/HEAD').replace(/^upstream\//, '')
   const cfg = { upstream: git('remote', 'get-url', 'upstream'), branch, agent, check: '' }
 
-  git('config', 'rerere.enabled', 'true')
   fs.mkdirSync(DIR, { recursive: true })
   fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + '\n')
   fs.copyFileSync(fileURLToPath(import.meta.url), `${DIR}/xtend.mjs`)
-  const fork = tryGit('remote', 'get-url', 'origin')
-  if (fork) {
-    fs.mkdirSync('.github/workflows', { recursive: true })
-    fs.writeFileSync(WORKFLOW_FILE, workflow(agent))
-  }
   git('add', '-A')
   git('commit', '-q', '-m', 'xtend: set up')
 
   if (fs.existsSync(OWNER_SHEET)) log(`upstream ships ${OWNER_SHEET}, using it`)
   else writeSheet(cfg)
 
-  if (fork) {
+  if (daily) setDaily(cfg, ['on'])
+  else {
     pushIfFork()
-    const repo = githubSlug(git('remote', 'get-url', 'origin'))
-    gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
-    log(`daily auto-sync is on. ${actionNote(agent, repo)}`)
+    log('daily sync is off. Turn it on with: xtend daily on')
   }
   log(`upstream ${stance(readPolicy(cfg))}`)
   log(`ready in ./${name}. Try: cd ${name} && xtend "describe a change"`)
@@ -301,6 +312,7 @@ function sync(cfg) {
   const ours = git('log', '--no-merges', '--format=- %B', `${theirs}..HEAD`)
   run('git', ['merge', '--no-ff', '--no-commit', theirs])
   const conflicted = git('diff', '--name-only', '--diff-filter=U')
+  let { open, reused } = replay(conflicted)
 
   const verify = () => {
     if (!fs.existsSync(git('rev-parse', '--git-path', 'MERGE_HEAD'))) return 'the merge was committed or aborted; leave that to xtend'
@@ -310,9 +322,15 @@ function sync(cfg) {
 
   let problem
   try {
-    problem = conflicted ? `conflicts in:\n${conflicted}` : verify()
+    problem = open ? `conflicts in:\n${open}` : verify()
+    if (problem && reused.length && !open) {
+      unreplay(reused)
+      reused = []
+      problem = `a resolution git remembered from an earlier merge failed:\n${problem}\n\nconflicts in:\n${conflicted}`
+    }
     if (problem) problem = resolveMerge(cfg, { ours, incoming, problem }, verify)
     if (!problem) {
+      run('git', ['rerere'])
       const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
       if (!c.ok) problem = `git commit failed:\n${c.err || c.out}`
     }
@@ -324,7 +342,11 @@ function sync(cfg) {
     git('clean', '-qfd')
     throw new Fail(`sync gave up, nothing changed:\n${problem}`)
   }
-  log(conflicted ? `merged upstream, agent resolved: ${conflicted.split('\n').join(', ')}` : 'merged upstream cleanly')
+  const fixed = conflicted.split('\n').filter((f) => f && !reused.includes(f))
+  log(!conflicted ? 'merged upstream cleanly' : [
+    reused.length && `merged upstream, reused ${reused.length} resolution${reused.length === 1 ? '' : 's'} git remembered: ${reused.join(', ')}`,
+    fixed.length && `merged upstream, agent resolved: ${fixed.join(', ')}`,
+  ].filter(Boolean).join('\n'))
   pushIfFork()
 }
 
@@ -472,12 +494,18 @@ function port(cfg, picked, theirs, signoff) {
       const patch = spawnSync('git', ['diff', '--binary', '--full-index', `${c.sha}^`, c.sha, '--', ...MINE], { maxBuffer: 64 << 20 }).stdout
       const applied = run('git', ['apply', '--3way', '--whitespace=nowarn'], { input: patch })
       const conflicted = git('diff', '--name-only', '--diff-filter=U')
+      const { open, reused } = replay(conflicted)
+      if (reused.length) log(`reused ${reused.length} resolution${reused.length === 1 ? '' : 's'} git remembered for "${c.subject}": ${reused.join(', ')}`)
       const verify = () => {
         if (git('rev-parse', 'HEAD') !== base) git('reset', '-q', '--soft', base)
         git('add', '-A')
         return markersLeft(conflicted) || check(cfg)
       }
-      let problem = applied.ok ? verify() : conflicted ? `conflicts in:\n${conflicted}` : `the diff did not apply:\n${applied.err}`
+      let problem = applied.ok || (conflicted && !open) ? verify() : conflicted ? `conflicts in:\n${open}` : `the diff did not apply:\n${applied.err}`
+      if (problem && reused.length && !open) {
+        unreplay(reused)
+        problem = `a resolution git remembered failed:\n${problem}\n\nconflicts in:\n${conflicted}`
+      }
       if (problem) {
         const prompt = `# Ref sheet\n${ref}\n
 # Task
@@ -501,6 +529,7 @@ ${SUMMARY}`
         if (r.summary) c.body = r.summary
       }
       if (problem) throw new Fail(`could not port "${c.subject}" onto upstream:\n${problem}`)
+      run('git', ['rerere'])
       if (!git('diff', '--cached', '--name-only')) { log(`upstream already has "${c.subject}"`); continue }
       git('commit', '-q', ...(signoff ? ['-s'] : []), '-m', c.subject, '-m', c.body || c.subject)
       c.port = git('rev-parse', 'HEAD')
@@ -628,6 +657,26 @@ function actionNote(agent, repo) {
   return `Add the install step and API key that ${name} needs to ${WORKFLOW_FILE}.`
 }
 
+function setDaily(cfg, [want]) {
+  const on = fs.existsSync(WORKFLOW_FILE)
+  if (!want) return console.log(`daily sync: ${on ? `on, in ${WORKFLOW_FILE}` : 'off. Turn it on with: xtend daily on'}`)
+  if (want !== 'on' && want !== 'off') throw new Fail('usage: xtend daily [on | off]')
+  const origin = run('git', ['remote', 'get-url', 'origin']).out
+  if (want === 'on' && !origin) throw new Fail('daily sync runs as a GitHub Action in your fork, and this clone has no origin to push it to.')
+  requireClean()
+  if (want === 'on') {
+    fs.mkdirSync(path.dirname(WORKFLOW_FILE), { recursive: true })
+    fs.writeFileSync(WORKFLOW_FILE, workflow(cfg.agent))
+    git('add', WORKFLOW_FILE)
+  } else if (on) git('rm', '-q', WORKFLOW_FILE)
+  if (run('git', ['diff', '--cached', '--quiet']).ok) log(`daily sync is already ${want}`)
+  else git('commit', '-q', '-m', `xtend: daily sync ${want}`)
+  pushIfFork()
+  const repo = origin && githubSlug(origin)
+  if (want === 'on' && repo && hasGh()) gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
+  log(want === 'on' ? `daily sync is on. ${repo ? actionNote(cfg.agent, repo) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
+}
+
 function setAgent(cfg, spec) {
   if (!spec.length) {
     console.log(`agent: ${cfg.agent}\n\npresets: ${Object.keys(AGENTS).join(', ')}\nset one: xtend agent codex -m <model>, or any command that reads the prompt on stdin or from {file}`)
@@ -652,6 +701,7 @@ try {
   if (!verb || verb === 'help' || verb === '-h' || verb === '--help') console.log(HELP)
   else if (verb === 'get') get(rest)
   else if (verb === 'agent') setAgent(loadConfig(), rest)
+  else if (verb === 'daily') setDaily(loadConfig(), rest)
   else if (verb === 'sync') sync(loadConfig())
   else if (verb === 'share') share(loadConfig(), rest)
   else if (verb === 'sheet') writeSheet(fs.existsSync(CONFIG) ? loadConfig() : { agent: defaultAgent() })
