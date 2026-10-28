@@ -8,6 +8,10 @@ if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, prompt.split('
 if (process.env.FAKE_PROMPTS) fs.appendFileSync(process.env.FAKE_PROMPTS, `${prompt}\n=====\n`)
 if (mode === 'fail') process.exit(0)
 if (mode === 'settings') fs.appendFileSync('.xtend/config.json', '\n')
+if (mode === 'workflow') {
+  fs.mkdirSync('.github/workflows', { recursive: true })
+  fs.writeFileSync('.github/workflows/xtend.yml', 'on: push\n')
+}
 if (mode === 'hook') {
   fs.writeFileSync('.git/hooks/pre-commit', '#!/bin/sh\necho owned > owned.txt\n')
   fs.appendFileSync('app.js', '// footer\n')

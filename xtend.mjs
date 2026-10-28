@@ -103,6 +103,7 @@ function loadConfig(need = true) {
   const repo = fs.existsSync(CONFIG) ? readJson(CONFIG) : {}
   const layers = [[CONFIG, CONFIG], ['this device', deviceFile()]].filter(([, f]) => fs.existsSync(f)).map(([from, file]) => ({ from, file: path.resolve(file), data: readJson(file) }))
   for (const { file, data } of layers) {
+    if (data.prompt) throw new Fail(`${file}: set prompt under steps.<step>, since each step has its own placeholders`)
     for (const [name, s] of Object.entries(data.steps || {})) {
       if (!PROMPTS[name]) throw new Fail(`${file}: there is no step "${name}". Steps: ${Object.keys(PROMPTS).join(', ')}`)
       const bad = Object.keys(s).filter((k) => !STEP_KEYS.includes(k))
@@ -139,7 +140,7 @@ function loadConfig(need = true) {
 
 // The agent the daily Action runs: the repo's own sync agent, never this device's.
 function actionAgent(repo, agent = repo.agent) {
-  return agentCommand(String(repo.steps?.sync?.agent ?? agent), repo.agents)
+  return agentCommand(String(repo.steps?.sync?.agent || agent), repo.agents)
 }
 
 function sheet() {
@@ -187,8 +188,8 @@ function snapshot(fixed, dirs = []) {
 
 // Git config, attributes and hooks steer every later git command, xtend's and yours, so an agent must not change them.
 const gitSnapshot = () => snapshot(['config', 'config.worktree', 'info/attributes'].map((f) => git('rev-parse', '--git-path', f)), [path.join(git('rev-parse', '--git-common-dir'), 'hooks')])
-// Nor xtend's settings, its prompts, or the copy of xtend the daily Action runs.
-const settingsSnapshot = (cfg) => snapshot([...new Set([CONFIG, `${DIR}/xtend.mjs`, deviceFile(), ...Object.values(cfg.steps).map((s) => s.prompt.file && s.prompt.value).filter(Boolean)].map((f) => path.resolve(f)))])
+// Nor xtend's settings, its prompts, or the daily Action and the copy of xtend it runs.
+const settingsSnapshot = (cfg) => snapshot([...new Set([CONFIG, `${DIR}/xtend.mjs`, WORKFLOW_FILE, deviceFile(), ...Object.values(cfg.steps).map((s) => s.prompt.file && s.prompt.value).filter(Boolean)].map((f) => path.resolve(f)))])
 
 // Fills each {{name}} in one pass, so text inside the values is never read as a placeholder.
 function render(template, vars, where) {
@@ -748,7 +749,7 @@ function setDaily(cfg, [want]) {
   requireClean()
   if (want === 'on') {
     fs.mkdirSync(path.dirname(WORKFLOW_FILE), { recursive: true })
-    fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo), cfg.agents))
+    fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo), cfg.repo.agents))
     git('add', WORKFLOW_FILE)
   } else if (on) git('rm', '-q', WORKFLOW_FILE)
   if (run('git', ['diff', '--cached', '--quiet']).ok) log(`daily sync is already ${want}`)
@@ -756,7 +757,7 @@ function setDaily(cfg, [want]) {
   pushIfFork()
   const repo = origin && githubSlug(origin)
   if (want === 'on' && repo && hasGh()) gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
-  log(want === 'on' ? `daily sync is on. ${repo ? actionNote(actionAgent(cfg.repo), repo, cfg.agents) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
+  log(want === 'on' ? `daily sync is on. ${repo ? actionNote(actionAgent(cfg.repo), repo, cfg.repo.agents) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
 }
 
 function setAgent(cfg, spec) {
@@ -766,14 +767,16 @@ function setAgent(cfg, spec) {
     return
   }
   requireClean()
-  const agent = agentCommand(spec.join(' '), cfg.agents)
+  const agent = agentCommand(spec.join(' '), cfg.repo.agents)
   fs.writeFileSync(CONFIG, JSON.stringify({ ...JSON.parse(fs.readFileSync(CONFIG, 'utf8')), agent }, null, 2) + '\n')
-  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo, agent), cfg.agents))
+  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo, agent), cfg.repo.agents))
   git('add', '-A')
-  git('commit', '-q', '-m', `xtend: use ${presetOf(agent, cfg.agents)[0]} as the agent`)
+  git('commit', '-q', '-m', `xtend: use ${presetOf(agent, cfg.repo.agents)[0]} as the agent`)
   log(`agent is now: ${agent}`)
+  const own = Object.entries(cfg.repo.steps || {}).filter(([, st]) => st.agent).map(([name]) => name)
+  if (own.length) log(`${own.join(', ')} keep${own.length === 1 ? 's' : ''} its own agent from ${CONFIG}`)
   const repo = fs.existsSync(WORKFLOW_FILE) && githubSlug(git('remote', 'get-url', 'origin'))
-  if (repo) log(actionNote(actionAgent(cfg.repo, agent), repo, cfg.agents))
+  if (repo) log(actionNote(actionAgent(cfg.repo, agent), repo, cfg.repo.agents))
   pushIfFork()
 }
 
