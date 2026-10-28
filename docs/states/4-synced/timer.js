@@ -29,6 +29,10 @@ function format(seconds) {
   return `${m}:${s}`
 }
 
+function progress(t) {
+  return t.remaining / (PRESETS[t.preset].minutes * 60)
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { PRESETS, SESSIONS_PER_LONG_BREAK, createTimer, tick, nextPreset, format }
+  module.exports = { PRESETS, SESSIONS_PER_LONG_BREAK, createTimer, tick, nextPreset, format, progress }
 }

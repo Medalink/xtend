@@ -10,6 +10,7 @@ description: Keep a customized fork of an open-source project with upstream merg
 ## Commands
 
 - `xtend get <owner/repo>` forks and clones the project, writes `.xtend/`, and turns on a daily sync Action.
+- `xtend agent [preset or command]` shows or sets which agent CLI xtend runs: `claude`, `codex`, `gemini`, `amp`, `opencode`, or any command that reads the prompt on stdin or from `{file}`.
 - `xtend sync` merges upstream. When it fails it resets to where it started and exits non-zero. Report its message to the user. Do not finish the merge by hand.
 - `xtend share --json` prints what upstream accepts (`takes` is `pr`, `issue` or `null`, with the reasons in `notes`) and a numbered list of the user's changes.
 - `xtend share <n>... --yes` ports those changes onto upstream and opens one draft PR or issue.

@@ -11,19 +11,33 @@ const FORK_SHEET = `${DIR}/sheet.md`
 const OWNER_SHEET = 'XTEND.md'
 const TRIES = 3
 
+// Any command works as the agent: xtend pipes the prompt to its stdin, or writes it to a file and puts the path where {file} is.
+// These presets also tell the GitHub Action what to install and which key to pass. Pick one, add flags such as --model, or write your own.
 const AGENTS = {
-  claude: 'claude -p --allowedTools "Edit,Write,Bash(git rm *),Bash(git mv *)"',
-  codex: 'codex exec -s workspace-write -',
+  claude: { cmd: 'claude -p --allowedTools "Edit,Write,Bash(git rm *),Bash(git mv *)"', install: '@anthropic-ai/claude-code', key: 'ANTHROPIC_API_KEY' },
+  codex: { cmd: 'codex exec -s workspace-write -', install: '@openai/codex', key: 'OPENAI_API_KEY' },
+  gemini: { cmd: 'gemini --approval-mode auto_edit', install: '@google/gemini-cli', key: 'GEMINI_API_KEY' },
+  amp: { cmd: 'amp -x', install: '@sourcegraph/amp', key: 'AMP_API_KEY' },
+  opencode: { cmd: 'opencode run --auto -f {file} "Do what the attached file asks."', install: 'opencode-ai' },
 }
+
+// "codex -m gpt-6" becomes the codex preset plus "-m gpt-6"; anything else is used as written.
+function agentCommand(spec) {
+  const [first, ...more] = spec.trim().split(/\s+/)
+  return AGENTS[first] ? [AGENTS[first].cmd, ...more].join(' ') : spec.trim()
+}
+const presetOf = (cmd) => Object.entries(AGENTS).find(([, p]) => cmd.split(' ')[0] === p.cmd.split(' ')[0]) || [cmd.split(' ')[0], {}]
 
 const HELP = `xtend: keep your own version of any repo, with upstream merged in for you.
 
   xtend get <owner/repo | url | path>   fork, clone, write the ref sheet, turn on auto-sync
+      [--agent <preset or command>]     claude, codex, gemini, amp, opencode, or your own command
   xtend "<what you want>"               your agent makes the change and commits it
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sheet                           (re)write the ref sheet agents read before editing
   xtend share [--json]                  what upstream accepts, and which of your changes you could offer
   xtend share <n>... [--yes]            offer those changes upstream, the way the owner asks for them
+  xtend agent [preset or command]       show or change the agent, e.g. \`xtend agent codex -m gpt-6\`
 
 Owners: run \`xtend sheet\` in your repo and commit XTEND.md. Nothing else is needed.
 Its \`contributions:\` line (pr, issue or none) decides what forks may send back.`
@@ -57,17 +71,23 @@ const has = (bin) => run(process.platform === 'win32' ? 'where' : 'which', [bin]
 const log = (msg) => console.log(`xtend: ${msg}`)
 
 function shell(cmd, input) {
-  const r = spawnSync(cmd, { shell: true, input, encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['pipe', 'pipe', 'inherit'] })
-  return { ok: r.status === 0, out: (r.stdout || '').trim() }
+  const file = cmd.includes('{file}') && path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xtend-')), 'prompt.md')
+  if (file) fs.writeFileSync(file, input)
+  try {
+    const r = spawnSync(file ? cmd.replaceAll('{file}', JSON.stringify(file)) : cmd, { shell: true, input: file ? '' : input, encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['pipe', 'pipe', 'inherit'] })
+    return { ok: r.status === 0, out: (r.stdout || '').trim() }
+  } finally {
+    if (file) fs.rmSync(path.dirname(file), { recursive: true, force: true })
+  }
 }
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG)) throw new Fail(`no ${CONFIG} here. Run \`xtend get <repo>\` first.`)
   const cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8'))
-  return { ...cfg, agent: process.env.XTEND_AGENT || cfg.agent }
+  return { ...cfg, agent: process.env.XTEND_AGENT ? agentCommand(process.env.XTEND_AGENT) : cfg.agent }
 }
 
-const defaultAgent = () => process.env.XTEND_AGENT || (has('claude') ? AGENTS.claude : has('codex') ? AGENTS.codex : AGENTS.claude)
+const defaultAgent = () => (process.env.XTEND_AGENT ? agentCommand(process.env.XTEND_AGENT) : null) || (Object.values(AGENTS).find((p) => has(p.cmd.split(' ')[0])) || AGENTS.claude).cmd
 
 function sheet() {
   for (const f of [OWNER_SHEET, FORK_SHEET]) if (fs.existsSync(f)) return fs.readFileSync(f, 'utf8')
@@ -154,8 +174,11 @@ function githubSlug(src) {
   return m && !fs.existsSync(src) ? `${m[1]}/${m[2]}` : null
 }
 
-function get(src) {
-  if (!src) throw new Fail('usage: xtend get <owner/repo | url | path>')
+function get(args) {
+  const at = args.indexOf('--agent')
+  const agent = at >= 0 ? agentCommand(args.splice(at, 2)[1] || '') : defaultAgent()
+  const src = args[0]
+  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>]')
   const slug = githubSlug(src)
   const name = path.basename(slug || src).replace(/\.git$/, '')
   if (fs.existsSync(name)) throw new Fail(`${name} already exists`)
@@ -172,7 +195,7 @@ function get(src) {
 
   tryGit('remote', 'set-head', 'upstream', '--auto')
   const branch = git('rev-parse', '--abbrev-ref', 'upstream/HEAD').replace(/^upstream\//, '')
-  const cfg = { upstream: git('remote', 'get-url', 'upstream'), branch, agent: defaultAgent(), check: '' }
+  const cfg = { upstream: git('remote', 'get-url', 'upstream'), branch, agent, check: '' }
 
   git('config', 'rerere.enabled', 'true')
   fs.mkdirSync(DIR, { recursive: true })
@@ -181,7 +204,7 @@ function get(src) {
   const fork = tryGit('remote', 'get-url', 'origin')
   if (fork) {
     fs.mkdirSync('.github/workflows', { recursive: true })
-    fs.writeFileSync('.github/workflows/xtend.yml', WORKFLOW)
+    fs.writeFileSync(WORKFLOW_FILE, workflow(agent))
   }
   git('add', '-A')
   git('commit', '-q', '-m', 'xtend: set up')
@@ -193,7 +216,7 @@ function get(src) {
     pushIfFork()
     const repo = githubSlug(git('remote', 'get-url', 'origin'))
     gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
-    log(`daily auto-sync is on. Give it a key once: gh secret set ANTHROPIC_API_KEY -R ${repo}`)
+    log(`daily auto-sync is on. ${actionNote(agent, repo)}`)
   }
   log(`upstream ${stance(readPolicy(cfg))}`)
   log(`ready in ./${name}. Try: cd ${name} && xtend "describe a change"`)
@@ -540,7 +563,7 @@ function share(cfg, args) {
     if (policy.wanted) console.log(`\nThe owner would welcome:\n${policy.wanted}`)
     if (past.open) console.log(`\nYour open offer: ${past.open.url}. Sharing again updates it.`)
     console.log(list.length
-      ? `\nYour changes:\n${list.map((c) => `  ${c.n}. ${c.subject} (${c.files.length} file${c.files.length === 1 ? '' : 's'}, ${c.closedBefore ? 'the owner closed it before' : c.appliesCleanly ? 'applies cleanly' : 'your agent will port it'})`).join('\n')}`
+      ? `\nYour changes:\n${list.map((c) => `  ${c.n}. ${c.subject.length > 72 ? `${c.subject.slice(0, 69)}...` : c.subject} (${c.files.length} file${c.files.length === 1 ? '' : 's'}, ${c.closedBefore ? 'the owner closed it before' : c.appliesCleanly ? 'applies cleanly' : 'your agent will port it'})`).join('\n')}`
       : '\nNothing to offer yet: every commit so far is xtend setup.')
     if (via && list.length) console.log(`\nOffer some with: xtend share ${list.length > 1 ? '1 2' : '1'}`)
     return
@@ -585,7 +608,13 @@ function share(cfg, args) {
   log(past.open ? `updated ${past.open.url}` : `opened ${r.out}`)
 }
 
-const WORKFLOW = `name: xtend sync
+// --- agent and the Action ---------------------------------------------
+
+const WORKFLOW_FILE = '.github/workflows/xtend.yml'
+
+function workflow(agent) {
+  const [, p] = presetOf(agent)
+  return `name: xtend sync
 on:
   schedule: [{ cron: '17 6 * * *' }]
   workflow_dispatch:
@@ -597,22 +626,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - run: npm i -g @anthropic-ai/claude-code
-      - run: |
+${p.install ? `      - run: npm i -g ${p.install}\n` : ''}      - run: |
           git config user.name "xtend"
           git config user.email "xtend@users.noreply.github.com"
           node .xtend/xtend.mjs sync
-        env:
-          ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
-          XTEND_AGENT: '${AGENTS.claude}'
-`
+${p.key ? `        env:\n          ${p.key}: \${{ secrets.${p.key} }}\n` : ''}`
+}
+
+function actionNote(agent, repo) {
+  const [name, p] = presetOf(agent)
+  if (p.key) return `Give it a key once: gh secret set ${p.key} -R ${repo}`
+  return `Add the install step and API key that ${name} needs to ${WORKFLOW_FILE}.`
+}
+
+function setAgent(cfg, spec) {
+  if (!spec.length) {
+    console.log(`agent: ${cfg.agent}\n\npresets: ${Object.keys(AGENTS).join(', ')}\nset one: xtend agent codex -m <model>, or any command that reads the prompt on stdin or from {file}`)
+    return
+  }
+  requireClean()
+  const agent = agentCommand(spec.join(' '))
+  fs.writeFileSync(CONFIG, JSON.stringify({ ...JSON.parse(fs.readFileSync(CONFIG, 'utf8')), agent }, null, 2) + '\n')
+  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(agent))
+  git('add', '-A')
+  git('commit', '-q', '-m', `xtend: use ${presetOf(agent)[0]} as the agent`)
+  log(`agent is now: ${agent}`)
+  const repo = fs.existsSync(WORKFLOW_FILE) && githubSlug(git('remote', 'get-url', 'origin'))
+  if (repo) log(actionNote(agent, repo))
+  pushIfFork()
+}
 
 // --- main --------------------------------------------------------------
 
 const [verb, ...rest] = process.argv.slice(2)
 try {
   if (!verb || verb === 'help' || verb === '-h' || verb === '--help') console.log(HELP)
-  else if (verb === 'get') get(rest[0])
+  else if (verb === 'get') get(rest)
+  else if (verb === 'agent') setAgent(loadConfig(), rest)
   else if (verb === 'sync') sync(loadConfig())
   else if (verb === 'share') share(loadConfig(), rest)
   else if (verb === 'sheet') writeSheet(fs.existsSync(CONFIG) ? loadConfig() : { agent: defaultAgent() })

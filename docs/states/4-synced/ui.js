@@ -26,19 +26,15 @@ function renderSessions() {
 
 function render() {
   $('time').textContent = format(timer.remaining)
+  $('ring').style.strokeDashoffset = 1 - progress(timer)
   $('start').textContent = timer.running ? 'Pause' : 'Start'
   document.title = `${format(timer.remaining)} · pomo`
   for (const tab of document.querySelectorAll('[data-preset]')) {
-    tab.classList.toggle('active', tab.dataset.preset === timer.preset)
+    const active = tab.dataset.preset === timer.preset
+    tab.classList.toggle('active', active)
+    tab.setAttribute('aria-pressed', active)
   }
   renderSessions()
-  renderDial()
-}
-
-function renderDial() {
-  $('ring').style.strokeDashoffset = 1 - timer.remaining / (PRESETS[timer.preset].minutes * 60)
-  document.body.dataset.preset = timer.preset
-  document.body.classList.toggle('running', timer.running)
 }
 
 function setPreset(preset) {
@@ -63,23 +59,20 @@ function step() {
   render()
 }
 
+function onKey(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
+  const preset = Object.keys(PRESETS)[Number(e.key) - 1]
+  if (e.key === ' ') toggle()
+  else if (e.key === 'r' || e.key === 'R') setPreset(timer.preset)
+  else if (preset) setPreset(preset)
+  else return
+  e.preventDefault()
+}
+
 $('start').addEventListener('click', toggle)
 $('reset').addEventListener('click', () => setPreset(timer.preset))
 for (const tab of document.querySelectorAll('[data-preset]')) {
   tab.addEventListener('click', () => setPreset(tab.dataset.preset))
 }
-
-const shortcuts = { ' ': toggle, r: () => setPreset(timer.preset) }
-
-function onShortcut(e) {
-  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
-  const preset = Object.keys(PRESETS)[Number(e.key) - 1]
-  const action = preset ? () => setPreset(preset) : shortcuts[e.key.toLowerCase()]
-  if (!action) return
-  e.preventDefault()
-  action()
-}
-
-document.addEventListener('keydown', onShortcut)
-document.addEventListener('keyup', (e) => { if (e.key === ' ') e.preventDefault() })
+document.addEventListener('keydown', onKey)
 render()

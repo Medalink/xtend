@@ -15,7 +15,10 @@ const fork = path.join(home, 'pomo')
 
 const REDESIGN = `Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to "Deep work" (50 minutes) and "Recharge" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.`
 
-const NOISE = /claude\.ai connectors are disabled|LF will be replaced by CRLF/
+const WANTED = 'Accessibility fixes are welcome, especially for screen readers.'
+const A11Y = 'Announce the current mode and the end of each session to screen readers with an aria-live region.'
+
+const NOISE =/claude\.ai connectors are disabled|LF will be replaced by CRLF/
 const steps = []
 const scrub = (json) => [root, root.replaceAll('\\', '/')].reduce((s, r) => s.split(JSON.stringify(r).slice(1, -1)).join('~'), json)
 
@@ -68,6 +71,7 @@ const v1 = git(upstream, 'rev-parse', 'HEAD')
 copyApp(upstream, path.join(DOCS, 'states', '1-upstream'))
 
 xtend('owner', 'The owner writes a ref sheet once', upstream, ['sheet'])
+fs.appendFileSync(path.join(upstream, 'XTEND.md'), `${WANTED}\n`)
 git(upstream, 'add', 'XTEND.md')
 git(upstream, 'commit', '-q', '-m', 'Add XTEND.md')
 
@@ -117,6 +121,23 @@ for (const line of fs.readFileSync(path.join(here, 'pomo-v2', 'test.js'), 'utf8'
   assert.ok(mergedTests.includes(line), `upstream test survives the merge unedited: ${line}`)
 }
 
+xtend('you', 'A small fix the owner asked for', fork, [A11Y])
+xtend('you', 'What upstream would take', fork, ['share'])
+const offered = JSON.parse(exec(fork, 'node', [XTEND, 'share', '--json']).out).changes.find((c) => c.subject === A11Y)
+xtend('you', 'Offer only that fix', fork, ['share', String(offered.n), '--yes'])
+const offerFile = (f) => exec(fork, 'git', ['show', `xtend/offer:${f}`])
+const offerCode = ['timer.js', 'app.js', 'index.html'].map((f) => offerFile(f).out).join('\n')
+assert.match(offerCode, /aria-live/, 'the offer carries the fix')
+assert.doesNotMatch(offerCode, /Deep work/i, 'the offer carries none of the redesign')
+assert.equal(offerFile('ui.js').status === 0, false, 'the offer keeps upstream app.js layout')
+const offerTree = path.join(root, 'offer')
+git(fork, 'worktree', 'add', '-q', offerTree, 'xtend/offer')
+assert.equal(exec(offerTree, 'node', ['test.js']).status, 0, 'upstream tests pass on the offer')
+const offer = {
+  files: git(fork, 'diff', '--stat', 'upstream/main', 'xtend/offer'),
+  body: fs.readFileSync(path.join(fork, '.git', 'xtend-offer.md'), 'utf8'),
+}
+
 const result = {
   generated: new Date().toISOString(),
   agent: JSON.parse(fs.readFileSync(cfgPath, 'utf8')).agent,
@@ -129,6 +150,8 @@ const result = {
   log: git(fork, 'log', '--graph', '--format=%s', '-n', '12'),
   steps,
   sheet: fs.readFileSync(path.join(upstream, 'XTEND.md'), 'utf8'),
+  wanted: WANTED,
+  offer,
 }
 fs.mkdirSync(path.join(DOCS, 'data'), { recursive: true })
 fs.writeFileSync(path.join(DOCS, 'data', 'demo.json'), scrub(JSON.stringify(result, null, 2)) + '\n')

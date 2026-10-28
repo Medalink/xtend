@@ -20,13 +20,25 @@ xtend share                                # see what upstream accepts, then off
 
 In the [demo](https://medalink.github.io/xtend/#hard), a fork rewrites a Pomodoro app from one sentence. It goes dark, gets a progress ring, 50-minute sessions and keyboard shortcuts, and the DOM code moves from `app.js` into `ui.js`. Upstream then ships long breaks, session tracking and a chime through `app.js`, and renames modes to presets.
 
-`git merge` stops on 3 of 5 files, and the tests crash on conflict markers. `xtend sync` merges it on the agent's first try. Both sides survive, and upstream's new tests pass on the redesigned code.
+`git merge` stops on all 5 files it touches, and the tests crash on conflict markers. `xtend sync` merges it on the agent's first try. Both sides survive, and upstream's new tests pass on the redesigned code.
 
 | Upstream 2.0 | Yours, after `xtend sync` |
 |---|---|
 | ![upstream](docs/img/3-upstream-v2.png) | ![synced](docs/img/4-synced.png) |
 
 Every number and transcript on the board comes from a real run of `node demo/run.mjs`.
+
+## Any language
+
+xTend knows nothing about languages. It runs the project's own check, and the agent does the rest. The same story, run for real with `node demo/example.mjs`:
+
+| Project | Your sentence asked for | Upstream 2.0 | Plain `git merge` | `xtend sync` |
+|---|---|---|---|---|
+| PHP, `tally` | Give members 5% off the subtotal | Tally 2.0: integer cents, coupon codes and per-category tax | 1 conflict, `php tests/run.php` fails | merged in 43s, check passes, 6 features kept |
+| Python, `streaks` | Give every habit an optional weekly goal | streaks 2.0: freezes, notes on check-ins, renamed API, versioned store | 1 conflict, `python -m unittest -q` fails | merged in 51s, check passes, 6 features kept |
+| Rust, `logsum` | A `severity_score` that weights each log level, shown under the report | logsum 2.0: typed levels, hourly buckets, --min-level filter | 1 conflict, `cargo test --quiet` fails | merged in 32s, check passes, 6 features kept |
+
+The specs live in `demo/examples/<lang>/`: upstream `v1/` and `v2/`, the sentence, and what must survive.
 
 ## Giving back
 
@@ -39,8 +51,8 @@ The owner would welcome:
 Accessibility fixes are welcome, especially for screen readers.
 
 Your changes:
-  1. Redesign pomo into a dark, distraction-free focus app... (5 files, your agent will port it)
-  2. Announce the current mode and the end of each session to screen readers... (2 files, your agent will port it)
+  1. Redesign pomo into a dark, distraction-free focus app. Replace the li... (7 files, your agent will port it)
+  2. Announce the current mode and the end of each session to screen reade... (4 files, your agent will port it)
 
 Offer some with: xtend share 1 2
 ```
@@ -70,7 +82,28 @@ Nothing is required. To help people who extend your project, run `xtend sheet` a
 
 The sheet ends with `contributions: pr`. Change it to `issue` or `none`, and list what you would welcome under it. Every fork's `xtend share` reads it from your latest code before offering anything.
 
-## Agents
+## Pick your agent
+
+xTend works with any agent CLI. It sends the prompt on stdin, or writes it to a file and puts the path wherever your command says `{file}`. The agent edits files, and xTend does the git work and runs your check.
+
+```sh
+xtend get owner/repo --agent codex           # choose one when you fork
+xtend agent gemini -m gemini-3-pro           # switch later; extra flags pick the model
+xtend agent "my-agent --prompt-file {file}"  # or any command of your own
+XTEND_AGENT=amp xtend sync                   # or just for one run
+```
+
+| Preset | Command | Action installs | Secret |
+|---|---|---|---|
+| `claude` | `claude -p --allowedTools "Edit,Write,Bash(git rm *),Bash(git mv *)"` | `@anthropic-ai/claude-code` | `ANTHROPIC_API_KEY` |
+| `codex` | `codex exec -s workspace-write -` | `@openai/codex` | `OPENAI_API_KEY` |
+| `gemini` | `gemini --approval-mode auto_edit` | `@google/gemini-cli` | `GEMINI_API_KEY` |
+| `amp` | `amp -x` | `@sourcegraph/amp` | `AMP_API_KEY` |
+| `opencode` | `opencode run --auto -f {file} "..."` | `opencode-ai` | your provider's key, added by hand |
+
+Without `--agent`, `xtend get` picks the first of these that is installed. `xtend agent` rewrites `.github/workflows/xtend.yml` to match, so make any custom edits to it after you pick. The demo and every example ran on `claude`. The other presets are built from each CLI's `--help` and have not been run end to end.
+
+## Agents driving xTend
 
 Agents drive xTend through its CLI, so there is no MCP server to run. `xtend share --json` prints what upstream accepts and the list of changes for an agent to read. [`skills/xtend/SKILL.md`](skills/xtend/SKILL.md) is an Agent Skill for Claude Code, Codex and others. Copy it into your agent's skills folder. It tells the agent to run `xtend share` with change numbers only when you asked to contribute those changes.
 
@@ -80,7 +113,7 @@ It uses tools you already have. Nothing runs as a service.
 
 - **GitHub** holds your fork. `gh repo fork` creates it, and a GitHub Action in it runs `xtend sync` every day.
 - **git** does the merging. Commit messages hold the intent of each customization, and `rerere` remembers past resolutions.
-- **Your agent CLI** handles what git can't. That's `claude -p` by default, or `codex exec`, or anything in `XTEND_AGENT`. It sees the ref sheet, what you changed and why, and what upstream changed.
+- **Your agent CLI** handles what git can't. That's Claude Code, Codex, Gemini, Amp, opencode, or any command you set. It sees the ref sheet, what you changed and why, and what upstream changed.
 - **Your check** gates every change and merge. Set `"check": "npm test"` in `.xtend/config.json`.
 
 ## Safety
@@ -93,7 +126,7 @@ It uses tools you already have. Nothing runs as a service.
 
 ## Auto-sync setup
 
-`xtend get` adds `.github/workflows/xtend.yml` to your fork and turns on Actions. It needs one secret:
+`xtend get` adds `.github/workflows/xtend.yml` to your fork and turns on Actions. It installs your agent and needs that agent's key once, for example:
 
 ```sh
 gh secret set ANTHROPIC_API_KEY -R you/repo

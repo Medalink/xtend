@@ -88,6 +88,20 @@ r = xtend(fork, ['sync'])
 assert.equal(r.status, 0, 'retry after failure succeeds')
 assert.match(fs.readFileSync(path.join(fork, 'app.js'), 'utf8'), /howdy/)
 
+const fake = `node "${path.join(here, 'fake-agent.mjs')}"`
+const savedAgent = { XTEND_AGENT: '' }
+r = xtend(fork, ['agent', 'codex', '-m', 'gpt-x'], savedAgent)
+assert.equal(r.status, 0, r.stderr)
+assert.equal(JSON.parse(fs.readFileSync(cfgPath)).agent, 'codex exec -s workspace-write - -m gpt-x', 'a preset plus your own flags')
+r = xtend(fork, ['agent'], savedAgent)
+assert.match(r.stdout, /agent: codex exec/, 'xtend agent shows the current agent')
+r = xtend(fork, ['agent', `${fake} --file {file}`], savedAgent)
+assert.equal(JSON.parse(fs.readFileSync(cfgPath)).agent, `${fake} --file {file}`, 'any command can be the agent')
+r = xtend(fork, ['say', 'howdy', 'twice'], { ...savedAgent, FAKE_MODE: 'append' })
+assert.equal(r.status, 0, `an agent that reads the prompt from {file} works: ${r.stderr}`)
+assert.match(git(fork, 'log', '-1', '--format=%s'), /xtend: say howdy twice/)
+assert.equal(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith('xtend-') && fs.existsSync(path.join(os.tmpdir(), f, 'prompt.md'))).length, 0, 'the prompt file is cleaned up')
+
 let synced = git(fork, 'rev-parse', 'HEAD')
 r = xtend(fork, ['add', 'a', 'footer'], { FAKE_MODE: 'hook' })
 assert.equal(r.status, 1, 'an agent that writes a git hook is stopped')
@@ -138,7 +152,7 @@ const preview = (extra) => JSON.parse(xtend(fork, ['share', '--json'], extra).st
 
 let p = preview()
 assert.equal(p.takes, 'pr')
-assert.deepEqual(p.changes.map((c) => c.subject), ['make it say howdy'], 'only your own changes are offered, not xtend setup')
+assert.deepEqual(p.changes.map((c) => c.subject), ['make it say howdy', 'say howdy twice'], 'only your own changes are offered, not xtend setup')
 assert.equal(p.changes[0].appliesCleanly, false, 'upstream moved under the change')
 
 let mine = git(fork, 'rev-parse', 'HEAD')

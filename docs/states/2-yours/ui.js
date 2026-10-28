@@ -5,18 +5,14 @@ const $ = (id) => document.getElementById(id)
 
 function render() {
   $('time').textContent = format(timer.remaining)
+  $('ring').style.strokeDashoffset = 1 - progress(timer)
   $('start').textContent = timer.running ? 'Pause' : 'Start'
   document.title = `${format(timer.remaining)} · pomo`
   for (const tab of document.querySelectorAll('[data-mode]')) {
-    tab.classList.toggle('active', tab.dataset.mode === timer.mode)
+    const active = tab.dataset.mode === timer.mode
+    tab.classList.toggle('active', active)
+    tab.setAttribute('aria-pressed', active)
   }
-  renderDial()
-}
-
-function renderDial() {
-  $('ring').style.strokeDashoffset = 1 - timer.remaining / (MODES[timer.mode].minutes * 60)
-  document.body.dataset.mode = timer.mode
-  document.body.classList.toggle('running', timer.running)
 }
 
 function setMode(mode) {
@@ -38,23 +34,20 @@ function step() {
   render()
 }
 
+function onKey(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
+  const mode = Object.keys(MODES)[Number(e.key) - 1]
+  if (e.key === ' ') toggle()
+  else if (e.key === 'r' || e.key === 'R') setMode(timer.mode)
+  else if (mode) setMode(mode)
+  else return
+  e.preventDefault()
+}
+
 $('start').addEventListener('click', toggle)
 $('reset').addEventListener('click', () => setMode(timer.mode))
 for (const tab of document.querySelectorAll('[data-mode]')) {
   tab.addEventListener('click', () => setMode(tab.dataset.mode))
 }
-
-const shortcuts = { ' ': toggle, r: () => setMode(timer.mode) }
-
-function onShortcut(e) {
-  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return
-  const mode = Object.keys(MODES)[Number(e.key) - 1]
-  const action = mode ? () => setMode(mode) : shortcuts[e.key.toLowerCase()]
-  if (!action) return
-  e.preventDefault()
-  action()
-}
-
-document.addEventListener('keydown', onShortcut)
-document.addEventListener('keyup', (e) => { if (e.key === ' ') e.preventDefault() })
+document.addEventListener('keydown', onKey)
 render()

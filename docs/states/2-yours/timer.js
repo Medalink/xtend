@@ -19,4 +19,8 @@ function format(seconds) {
   return `${m}:${s}`
 }
 
-if (typeof module !== 'undefined') module.exports = { MODES, createTimer, tick, format }
+function progress(t) {
+  return t.remaining / (MODES[t.mode].minutes * 60)
+}
+
+if (typeof module !== 'undefined') module.exports = { MODES, createTimer, tick, format, progress }

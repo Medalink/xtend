@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 
-const prompt = fs.readFileSync(0, 'utf8')
+const at = process.argv.indexOf('--file')
+const prompt = fs.readFileSync(at > 0 ? process.argv[at + 1] : 0, 'utf8')
 const mode = process.env.FAKE_MODE
 if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, prompt.split('\n')[0] + '\n')
 if (mode === 'fail') process.exit(0)
@@ -25,6 +26,7 @@ if (prompt.includes('Write a reference sheet')) {
 } else if (prompt.includes('# Request')) {
   fs.writeFileSync('app.js', fs.readFileSync('app.js', 'utf8').replace("'hello'", "'howdy'"))
   if (mode === 'commit') execFileSync('git', ['commit', '-qam', 'agent committed by itself'])
+  if (mode === 'append') fs.appendFileSync('app.js', '// twice\n')
   console.log('Changed the greeting to howdy.')
 } else if (prompt.includes('merging new upstream')) {
   const src = fs.readFileSync('app.js', 'utf8')

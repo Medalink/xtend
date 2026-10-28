@@ -3,24 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
   <title>pomo</title>
   <link rel="stylesheet" href="style.css">
-  <link rel="stylesheet" href="theme.css">
 </head>
 <body>
-  <main class="stage">
+  <main class="app">
     <nav class="tabs">
       <button data-preset="focus" aria-keyshortcuts="1">Deep work</button>
       <button data-preset="short" aria-keyshortcuts="2">Recharge</button>
       <button data-preset="long" aria-keyshortcuts="3">Long recharge</button>
     </nav>
     <div class="dial">
-      <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="ring-track" cx="60" cy="60" r="56"></circle>
-        <circle id="ring" class="ring-progress" cx="60" cy="60" r="56" pathLength="1"></circle>
+      <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="46" />
+        <circle id="ring" class="ring-progress" cx="50" cy="50" r="46" pathLength="1" />
       </svg>
-      <div id="time" class="time">50:00</div>
+      <div id="time" class="time" role="timer">50:00</div>
     </div>
     <div class="controls">
       <button id="start" class="primary" aria-keyshortcuts="Space">Start</button>

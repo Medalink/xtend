@@ -3,50 +3,82 @@
 body {
   margin: 0;
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #f6f1eb;
-  color: #3b2f2a;
+  background: #0e0f12;
+  color: #e8e6e3;
   font-family: system-ui, sans-serif;
 }
 
-.card {
-  width: 340px;
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
   padding: 32px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 8px 30px rgba(59, 47, 42, 0.1);
-  text-align: center;
 }
 
-h1 { margin: 0 0 20px; font-size: 18px; color: #d9534f; letter-spacing: 0.04em; }
-
-.tabs { display: flex; gap: 8px; justify-content: center; }
+.tabs { display: flex; gap: 8px; }
 
 button {
-  border: 1px solid #e5d9cf;
-  background: #fff;
-  color: inherit;
-  padding: 8px 16px;
-  border-radius: 8px;
+  border: 1px solid #2a2d33;
+  background: transparent;
+  color: #8b8f97;
+  padding: 10px 20px;
+  border-radius: 999px;
   font: inherit;
   cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
 
-.tabs button.active { background: #fbe9e7; border-color: #d9534f; color: #d9534f; }
+button:hover { color: #e8e6e3; border-color: #3a3e46; }
 
-.time { font-size: 72px; font-weight: 700; margin: 24px 0; font-variant-numeric: tabular-nums; }
+button:focus-visible { outline: 2px solid #7aa2f7; outline-offset: 3px; }
 
-.controls { display: flex; gap: 8px; justify-content: center; }
+.tabs button.active { color: #e8e6e3; border-color: #7aa2f7; background: #161a24; }
 
-.primary { background: #d9534f; border-color: #d9534f; color: #fff; min-width: 100px; }
+.dial {
+  position: relative;
+  width: min(70vmin, 420px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+}
 
-.progress { margin-top: 28px; }
+.ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+
+.ring circle { fill: none; stroke-width: 2; }
+
+.ring-track { stroke: #1d2026; }
+
+.ring-progress {
+  stroke: #7aa2f7;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  transition: stroke-dashoffset 1s linear;
+}
+
+.time {
+  font-size: min(16vmin, 96px);
+  font-weight: 200;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.controls { display: flex; gap: 12px; }
+
+.primary { background: #7aa2f7; border-color: #7aa2f7; color: #0e0f12; min-width: 120px; }
+
+.primary:hover { background: #8fb2fa; border-color: #8fb2fa; color: #0e0f12; }
+
+@media (prefers-reduced-motion: reduce) {
+  button, .ring-progress { transition: none; }
+}
 
 .sessions { display: flex; gap: 8px; justify-content: center; }
 
-.dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #d9534f; }
+.dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #2a2d33; }
 
-.dot.filled { background: #d9534f; }
+.dot.filled { background: #7aa2f7; border-color: #7aa2f7; }
 
-.count { margin-top: 10px; font-size: 13px; color: #8c7b72; }
+.count { margin-top: 10px; font-size: 13px; color: #8b8f97; text-align: center; }

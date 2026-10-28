@@ -1,0 +1,81 @@
+{
+  "id": "php",
+  "name": "tally",
+  "lang": "PHP",
+  "about": "A small shopping cart and invoice library with a command-line invoice printer.",
+  "check": "php tests/run.php",
+  "change": "Give members 5% off the subtotal: add a memberDiscount() function that computes it, a --member flag on bin/cart, and a \"Member discount\" line on the printed invoice.",
+  "upstream": "Tally 2.0: integer cents, coupon codes and per-category tax",
+  "kept": {
+    "yours": {
+      "memberDiscount function": true,
+      "--member flag": true,
+      "Member discount line": true
+    },
+    "upstream": {
+      "Coupon codes": true,
+      "Totals breakdown": true,
+      "Per-category tax": true
+    }
+  },
+  "generated": "2026-10-27T23:55:02.819Z",
+  "divergence": "3 files changed, 53 insertions(+), 2 deletions(-)",
+  "upstreamChange": "4 files changed, 112 insertions(+), 51 deletions(-)",
+  "plain": {
+    "status": 1,
+    "conflicted": [
+      "bin/cart"
+    ],
+    "checkPassed": false
+  },
+  "steps": [
+    {
+      "who": "you",
+      "title": "You take your own copy",
+      "command": "xtend get ~\\tally",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: wrote .xtend/sheet.md\nxtend: upstream takes pull requests\nxtend: ready in ./tally. Try: cd tally && xtend \"describe a change\"",
+      "seconds": 40.8,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You make it yours",
+      "command": "xtend \"Give members 5% off the subtotal: add a memberDiscount() function that computes it, a --member flag on bin/cart, and a \"Member discount\" line on the printed invoice.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 32.6,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What plain git does with it",
+      "command": "git merge upstream/main",
+      "output": "Auto-merging bin/cart\nCONFLICT (content): Merge conflict in bin/cart\nAuto-merging tests/run.php\nAutomatic merge failed; fix conflicts and then commit the result.\nRecorded preimage for 'bin/cart'",
+      "seconds": 0.7,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "And the check after it",
+      "command": "php tests/run.php",
+      "output": "ok   subtotal in cents\nok   per-category tax\nok   total in cents\nok   food is untaxed\nok   percent coupon\nok   flat coupon capped at subtotal\nok   rejects bad coupon, category and price\nok   invoice shows discount\nok   invoice shows total\nFAIL cli applies coupon\nFatal error: Uncaught Error: Call to undefined method Tally\\Cart::subtotal() in ~\\you\\tally\\src\\Member.php:10\nStack trace:\n#0 ~\\you\\tally\\tests\\run.php(60): Tally\\memberDiscount(Object(Tally\\Cart))\n#1 {main}\n  thrown in ~\\you\\tally\\src\\Member.php on line 10\nPHP Fatal error:  Uncaught Error: Call to undefined method Tally\\Cart::subtotal() in ~\\you\\tally\\src\\Member.php:10\nStack trace:\n#0 ~\\you\\tally\\tests\\run.php(60): Tally\\memberDiscount(Object(Tally\\Cart))\n#1 {main}\n  thrown in ~\\you\\tally\\src\\Member.php on line 10",
+      "seconds": 0.5,
+      "status": 255
+    },
+    {
+      "who": "you",
+      "title": "xtend merges it for you",
+      "command": "xtend sync",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream, agent resolved: bin/cart",
+      "seconds": 42.6,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "The check, on the merged code",
+      "command": "php tests/run.php",
+      "output": "ok   subtotal in cents\nok   per-category tax\nok   total in cents\nok   food is untaxed\nok   percent coupon\nok   flat coupon capped at subtotal\nok   rejects bad coupon, category and price\nok   invoice shows discount\nok   invoice shows total\nok   cli applies coupon\nok   member discount\nok   member total\nok   member invoice shows discount\nok   cli member flag\nPHP Warning:  Undefined array key 3 in ~\\you\\tally\\bin\\cart on line 24",
+      "seconds": 1,
+      "status": 0
+    }
+  ]
+}
