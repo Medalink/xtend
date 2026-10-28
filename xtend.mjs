@@ -158,18 +158,23 @@ function check(cfg) {
 }
 
 // rerere replays resolutions it recorded before, but leaves those files unmerged. Stage them, so only the rest goes to the agent.
+// If the agent later has to change a replayed file, that memory was wrong. git can't reliably forget one file's resolution, so wrong() drops them all.
 function replay(conflicted) {
   const open = conflicted && run('git', ['rerere', 'remaining']).out
   const reused = conflicted ? conflicted.split('\n').filter((f) => !open.split('\n').includes(f)) : []
   if (reused.length) git('add', '--', ...reused)
-  return { open, reused }
+  const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null)
+  const replayed = new Map(reused.map((f) => [f, read(f)]))
+  const wrong = () => {
+    const bad = reused.filter((f) => read(f) !== replayed.get(f))
+    if (bad.length) fs.rmSync(git('rev-parse', '--git-path', 'rr-cache'), { recursive: true, force: true })
+    else run('git', ['rerere'])
+    return bad
+  }
+  return { open, reused, wrong }
 }
 
-// A replayed resolution that fails the check must not come back. git can't reliably forget one file's resolution, so drop them all.
-function unreplay(reused) {
-  git('checkout', '-m', '--', ...reused)
-  fs.rmSync(git('rev-parse', '--git-path', 'rr-cache'), { recursive: true, force: true })
-}
+const replayed = (reused) => `git already resolved ${reused.join(', ')} the way it was resolved before. Keep those resolutions unless the failure below is in them. When the check still fails, a customization usually needs adapting to an upstream change that merged without conflicts.`
 
 // Call after `git add -A`. A lone ======= line only counts in files that had conflicts.
 function markersLeft(conflicted) {
@@ -312,7 +317,9 @@ function sync(cfg) {
   const ours = git('log', '--no-merges', '--format=- %B', `${theirs}..HEAD`)
   run('git', ['merge', '--no-ff', '--no-commit', theirs])
   const conflicted = git('diff', '--name-only', '--diff-filter=U')
-  let { open, reused } = replay(conflicted)
+  const { open, reused, wrong } = replay(conflicted)
+  let agentRan = false
+  let bad = []
 
   const verify = () => {
     if (!fs.existsSync(git('rev-parse', '--git-path', 'MERGE_HEAD'))) return 'the merge was committed or aborted; leave that to xtend'
@@ -323,14 +330,13 @@ function sync(cfg) {
   let problem
   try {
     problem = open ? `conflicts in:\n${open}` : verify()
-    if (problem && reused.length && !open) {
-      unreplay(reused)
-      reused = []
-      problem = `a resolution git remembered from an earlier merge failed:\n${problem}\n\nconflicts in:\n${conflicted}`
+    if (problem && reused.length) problem = `${replayed(reused)}\n\n${problem}`
+    if (problem) {
+      agentRan = true
+      problem = resolveMerge(cfg, { ours, incoming, problem }, verify)
     }
-    if (problem) problem = resolveMerge(cfg, { ours, incoming, problem }, verify)
     if (!problem) {
-      run('git', ['rerere'])
+      bad = wrong()
       const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
       if (!c.ok) problem = `git commit failed:\n${c.err || c.out}`
     }
@@ -342,11 +348,15 @@ function sync(cfg) {
     git('clean', '-qfd')
     throw new Fail(`sync gave up, nothing changed:\n${problem}`)
   }
-  const fixed = conflicted.split('\n').filter((f) => f && !reused.includes(f))
-  log(!conflicted ? 'merged upstream cleanly' : [
-    reused.length && `merged upstream, reused ${reused.length} resolution${reused.length === 1 ? '' : 's'} git remembered: ${reused.join(', ')}`,
-    fixed.length && `merged upstream, agent resolved: ${fixed.join(', ')}`,
-  ].filter(Boolean).join('\n'))
+  const kept = reused.filter((f) => !bad.includes(f))
+  const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f))
+  log([
+    conflicted || agentRan ? 'merged upstream' : 'merged upstream cleanly',
+    kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`,
+    fixed.length && `agent resolved: ${fixed.join(', ')}`,
+    agentRan && !fixed.length && 'agent fixed what the check reported',
+    bad.length && 'git forgot its old resolutions, because the agent had to change them',
+  ].filter(Boolean).join('; '))
   pushIfFork()
 }
 
@@ -494,7 +504,7 @@ function port(cfg, picked, theirs, signoff) {
       const patch = spawnSync('git', ['diff', '--binary', '--full-index', `${c.sha}^`, c.sha, '--', ...MINE], { maxBuffer: 64 << 20 }).stdout
       const applied = run('git', ['apply', '--3way', '--whitespace=nowarn'], { input: patch })
       const conflicted = git('diff', '--name-only', '--diff-filter=U')
-      const { open, reused } = replay(conflicted)
+      const { open, reused, wrong } = replay(conflicted)
       if (reused.length) log(`reused ${reused.length} resolution${reused.length === 1 ? '' : 's'} git remembered for "${c.subject}": ${reused.join(', ')}`)
       const verify = () => {
         if (git('rev-parse', 'HEAD') !== base) git('reset', '-q', '--soft', base)
@@ -502,10 +512,7 @@ function port(cfg, picked, theirs, signoff) {
         return markersLeft(conflicted) || check(cfg)
       }
       let problem = applied.ok || (conflicted && !open) ? verify() : conflicted ? `conflicts in:\n${open}` : `the diff did not apply:\n${applied.err}`
-      if (problem && reused.length && !open) {
-        unreplay(reused)
-        problem = `a resolution git remembered failed:\n${problem}\n\nconflicts in:\n${conflicted}`
-      }
+      if (problem && reused.length) problem = `${replayed(reused)}\n\n${problem}`
       if (problem) {
         const prompt = `# Ref sheet\n${ref}\n
 # Task
@@ -529,7 +536,7 @@ ${SUMMARY}`
         if (r.summary) c.body = r.summary
       }
       if (problem) throw new Fail(`could not port "${c.subject}" onto upstream:\n${problem}`)
-      run('git', ['rerere'])
+      if (wrong().length) log('git forgot its old resolutions, because the agent had to change them')
       if (!git('diff', '--cached', '--name-only')) { log(`upstream already has "${c.subject}"`); continue }
       git('commit', '-q', ...(signoff ? ['-s'] : []), '-m', c.subject, '-m', c.body || c.subject)
       c.port = git('rev-parse', 'HEAD')

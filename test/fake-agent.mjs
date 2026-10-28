@@ -30,6 +30,10 @@ if (prompt.includes('Write a reference sheet')) {
   console.log('Changed the greeting to howdy.')
 } else if (prompt.includes('merging new upstream')) {
   const src = fs.readFileSync('app.js', 'utf8')
+  if (prompt.includes('the way it was resolved before') && !src.includes('<<<<<<<')) {
+    fs.writeFileSync('app.js', "const greeting = 'howdy'\n// a\n// b\nconst name = 'everyone'\nconsole.log(greeting, name)\n")
+    process.exit(0)
+  }
   const fixed = mode === 'half'
     ? src.replace(/^(<<<<<<<|>>>>>>>) .*\r?\n/gm, '')
     : src.replace(/<<<<<<< .*\r?\n([\s\S]*?)=======\r?\n[\s\S]*?>>>>>>> .*\r?\n/g, '$1')

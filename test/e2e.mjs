@@ -78,9 +78,9 @@ for (const id of fs.readdirSync(rrCache)) fs.writeFileSync(path.join(rrCache, id
 r = xtend(fork, ['sync'])
 assert.equal(r.status, 0, r.stderr + r.stdout)
 assert.equal(agentCalls(), calls + 1, 'a remembered resolution that fails the check goes to the agent')
-assert.match(r.stdout, /agent resolved: app\.js/)
+assert.match(r.stdout, /agent resolved: app\.js; git forgot/)
 assert.match(fs.readFileSync(path.join(fork, 'app.js'), 'utf8'), /howdy[\s\S]*everyone/)
-assert.ok(fs.readdirSync(rrCache).every((id) => !/syntax error/.test(fs.readFileSync(path.join(rrCache, id, 'postimage'), 'utf8'))), 'the bad resolution is forgotten')
+assert.ok(!fs.existsSync(rrCache) || fs.readdirSync(rrCache).every((id) => !/syntax error/.test(fs.readFileSync(path.join(rrCache, id, 'postimage'), 'utf8'))), 'the bad resolution is forgotten')
 calls = agentCalls()
 
 commitUp('README.md', '# app\n', 'add readme')
