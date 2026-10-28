@@ -16,5 +16,17 @@
       "Totals breakdown": "function totals\\s*\\(",
       "Per-category tax": "TAX_RATES"
     }
+  },
+  "wanted": "Clearer error messages are welcome.",
+  "fix": "When bin/cart gets an unknown coupon code, make the error list the valid coupon codes.",
+  "screens": {
+    "upstream1": "php bin/cart pen=1.50*4 book=12",
+    "yours": "php bin/cart --member pen=1.50*4 book=12",
+    "upstream2": "php bin/cart --coupon SAVE10 pen=1.50*4 apple=0.40*10:food",
+    "synced": "php bin/cart --member --coupon SAVE10 pen=1.50*4 apple=0.40*10:food"
+  },
+  "offer": {
+    "run": "php bin/cart --coupon NOPE pen=1",
+    "has": "SAVE10"
   }
 }

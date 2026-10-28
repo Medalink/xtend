@@ -1,3 +1,4 @@
+// Builds docs/index.html from the real runs in docs/data/apps. One toggle switches every section between the apps.
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,115 +7,177 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const DOCS = path.join(here, '..', 'docs')
 const REPO = 'https://github.com/Medalink/xtend'
 const TWEET = 'https://x.com/trq212/status/2115188992861970693'
-const d = JSON.parse(fs.readFileSync(path.join(DOCS, 'data', 'demo.json'), 'utf8'))
+const ORDER = ['pomo', 'rust', 'php', 'python']
+const APPS_DIR = path.join(DOCS, 'data', 'apps')
+const apps = fs.readdirSync(APPS_DIR).map((f) => JSON.parse(fs.readFileSync(path.join(APPS_DIR, f), 'utf8')))
+  .sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id))
+const first = apps[0].id
 
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-const stat = (s) => {
-  const n = (re) => Number((s.match(re) || [0, 0])[1])
-  return { files: n(/(\d+) files? changed/), plus: n(/(\d+) insertion/), minus: n(/(\d+) deletion/) }
-}
-const yours = stat(d.divergence)
-const theirs = stat(d.upstreamChange)
-const step = (title) => d.steps.find((s) => s.title === title)
-const plain = step('What plain git does with it')
-const plainTests = step('And the tests after it')
-const sync = step('xtend merges it for you')
-const after = step('Upstream tests and yours, on the merged code')
-const shareList = step('What upstream would take')
-const shareSend = step('Offer only that fix')
-const conflicts = d.plain.conflicted.length
-const minutes = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${s}s`)
-const total = d.steps.reduce((a, s) => a + s.seconds, 0)
-const day = d.generated.slice(0, 10)
-const agentName = d.agent.split(' ')[0]
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const minutes = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`)
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
+const step = (a, title) => a.steps.find((s) => s.title === title)
+const tail = (s, n) => s.split('\n').slice(-n).join('\n')
+const TINT = [[/^xtend: (merged|committed|opened|branch|upstream takes|updated)|^OK$|passed|^ok\b|test result: ok/i, 'ok'], [/CONFLICT|FAILED|^error|Error:|SyntaxError|Automatic merge failed/i, 'bad'], [/^xtend:/, 'x']]
+const tint = (out) => out.split('\n').map((l) => { const t = TINT.find(([re]) => re.test(l)); return t ? `<span class="x-t-${t[1]}">${esc(l)}</span>` : esc(l) }).join('\n')
+const term = (command, output, label = command) =>
+  `<pre class="x-term" tabindex="0" aria-label="${esc(label)}"><span class="sd-faint">$</span> ${esc(command)}\n${tint(output)}</pre>`
+const each = (fn) => apps.map((a) => `<div class="x-app" data-app="${a.id}">${fn(a)}</div>`).join('')
+const pick = `<div class="sd-seg sd-seg-inline sd-seg-sm x-pick" role="group" aria-label="Example app">${apps.map((a) =>
+  `<button type="button" data-pick="${a.id}" aria-pressed="${a.id === first}">${esc(a.lang)}</button>`).join('')}</div>`
+const head = (n, kicker, title, sub) => `
+      <div class="x-head">
+        <div>
+          <p class="sd-label x-kicker"><b>${n}</b> ${kicker}</p>
+          <h2 id="${kicker.toLowerCase().replace(/\W+/g, '-')}-h" class="x-h2">${title} <em>${sub}</em></h2>
+        </div>
+        ${pick}
+      </div>`
 
-const fileRows = d.forkFiles.split('\n').filter(Boolean).map((l) => {
-  const [k, f, to] = l.split('\t')
-  const tone = { A: 'success', D: 'danger', M: 'pending', R: 'warning' }[k[0]] || ''
-  const word = { A: 'added', D: 'deleted', M: 'rewritten', R: 'moved and rewritten' }[k[0]] || k
-  const name = to ? `${esc(f)}</code> → <code>${esc(to)}` : esc(f)
-  return `<li data-tone="${tone}"><span><code>${name}</code> <span class="sd-subtle">${word}</span></span></li>`
-}).join('')
-
-const yoursKept = ['Deep work 50 min', 'progress ring', 'keyboard shortcuts', 'app.js stays deleted']
-const upstreamKept = ['long break every 4', 'session dots', 'chime']
-const KEPT_LABEL = {
-  'Deep work 50 min': '"Deep work" is 50 minutes, "Recharge" is 10',
-  'progress ring': 'Dark full-screen layout with the SVG progress ring',
-  'keyboard shortcuts': 'Space, R, 1 and 2 still work',
-  'app.js stays deleted': '<code>app.js</code> stays gone. Upstream\'s changes to it landed in <code>ui.js</code>',
-  'long break every 4': 'A long break after every 4th session (<code>nextPreset</code>)',
-  'session dots': 'Session dots and the "done today" count',
-  chime: 'The chime when a session ends',
-}
-const checks = (keys) => keys.map((k) => `<li data-tone="${d.kept[k] ? 'success' : 'danger'}"><span>${KEPT_LABEL[k]}</span></li>`).join('')
-
-const term = (s, lines = 40, head = false) => {
-  const all = s.output.split('\n')
-  const out = (head ? all.slice(0, lines) : all.slice(-lines)).join('\n')
-  return `<pre class="x-term" tabindex="0"><span class="sd-faint">$</span> ${esc(s.command)}\n${esc(out)}</pre>`
+// Every file either side touched, as two bars and what git made of it.
+function fileMap(a) {
+  const byFile = new Map()
+  for (const side of ['yours', 'theirs']) for (const f of a.files[side]) byFile.set(f.file, { ...byFile.get(f.file), [side]: f })
+  const max = Math.max(...[...byFile.values()].flatMap((v) => [v.yours, v.theirs].filter(Boolean).map((f) => f.add + f.del)))
+  const bar = (f, kind) => f
+    ? `<span class="x-bar" data-kind="${kind}"><i style="width:${Math.max(3, Math.round(((f.add + f.del) / max) * 100))}%"></i></span><span class="x-bar-n sd-subtle">${f.status === 'D' ? 'deleted' : f.status === 'A' ? `new +${f.add}` : `+${f.add} −${f.del}`}</span>`
+    : '<span class="x-bar"></span><span class="x-bar-n sd-faint">untouched</span>'
+  const rows = [...byFile.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([file, v]) => {
+    const conflict = a.files.conflicted.includes(file)
+    const verdict = conflict ? ['danger', 'conflict'] : v.yours && v.theirs ? ['pending', 'auto-merged'] : ['', v.yours ? 'yours only' : 'upstream only']
+    return `<li class="x-file"><code>${esc(file)}</code>${bar(v.yours, 'yours')}${bar(v.theirs, 'theirs')}<span class="sd-status"${verdict[0] ? ` data-tone="${verdict[0]}"` : ''}>${verdict[1]}</span></li>`
+  }).join('')
+  return `<ul class="x-files" aria-label="Files changed">
+          <li class="x-file x-file-head sd-label"><span>File</span><span>Yours</span><span></span><span>Upstream 2.0</span><span></span><span>git merge</span></li>${rows}</ul>`
 }
 
-const EX_DIR = path.join(DOCS, 'data', 'examples')
-const examples = fs.existsSync(EX_DIR) ? fs.readdirSync(EX_DIR).map((f) => JSON.parse(fs.readFileSync(path.join(EX_DIR, f), 'utf8'))) : []
-const exStep = (e, title) => e.steps.find((s) => s.title === title)
-const keptList = (e) => ['yours', 'upstream'].flatMap((side) => Object.entries(e.kept[side]).map(([k, ok]) =>
-  `<li data-tone="${ok ? 'success' : 'danger'}"><span>${esc(k)} <span class="sd-subtle">${side === 'yours' ? 'yours' : 'upstream'}</span></span></li>`)).join('')
-const exampleCards = examples.map((e) => {
-  const merged = exStep(e, 'xtend merges it for you')
-  const n = e.plain.conflicted.length
-  return `
-        <article class="x-cell x-lang">
-          <p class="x-lang-head"><span class="sd-badge">${esc(e.lang)}</span> <span class="sd-label">${esc(e.name)}</span></p>
-          <p class="sd-muted">${esc(e.about)}</p>
-          <dl class="sd-kv x-lang-kv">
-            <dt>You asked</dt><dd>${esc(e.change)}</dd>
-            <dt>Upstream</dt><dd>${esc(e.upstream)}</dd>
-            <dt>Check</dt><dd><code>${esc(e.check)}</code></dd>
-          </dl>
-          <p class="x-lang-stats">
-            <span class="sd-status" data-tone="${n ? 'danger' : 'pending'}">git: ${n ? `${n} conflict${n === 1 ? '' : 's'}` : 'merged'}, check ${e.plain.checkPassed ? 'passes' : 'fails'}</span>
-            <span class="sd-status" data-tone="success">xtend: merged in ${minutes(merged.seconds)}, check passes</span>
-          </p>
-          <ul class="sd-checks">${keptList(e)}</ul>
-          <details class="x-log"><summary>xtend sync output</summary>${term(merged, 20)}</details>
-        </article>`
-}).join('')
+// Upstream on top, the fork below, the merge where they meet.
+const graph = (a) => `<svg class="x-graph" viewBox="0 0 640 132" role="img" aria-label="Upstream goes from 1.0 to 2.0. Your fork adds your change, then xtend sync merges 2.0 into it.">
+          <line x1="40" y1="34" x2="600" y2="34" class="x-g-up"/>
+          <path d="M40 34 L120 98 L600 98" class="x-g-you"/>
+          <path d="M360 34 L440 98" class="x-g-merge"/>
+          <rect x="34" y="28" width="12" height="12" class="x-g-node"/><text x="40" y="18">${esc(a.name)} 1.0</text>
+          <rect x="354" y="28" width="12" height="12" class="x-g-node"/><text x="360" y="18">2.0</text>
+          <rect x="174" y="92" width="12" height="12" class="x-g-node x-g-mine"/><text x="180" y="124">your change</text>
+          <rect x="432" y="90" width="16" height="16" class="x-g-node x-g-done"/><text x="440" y="124">xtend sync</text>
+          <rect x="534" y="92" width="12" height="12" class="x-g-node x-g-mine"/><text x="540" y="124">fix</text>
+        </svg>`
 
-const shots = [
-  ['1-upstream', 'pomo 1.0', 'Upstream, the day you fork it.'],
-  ['2-yours', 'Yours', 'One sentence to your agent: dark, ring, 50 minutes, shortcuts, new file layout.'],
-  ['3-upstream-v2', 'pomo 2.0', 'Upstream ships long breaks, session dots and a chime, and renames modes to presets.'],
-  ['4-synced', 'Yours + 2.0', 'After <code>xtend sync</code>. Your design, their features, both test suites green.'],
+const kept = (a) => ['yours', 'upstream'].map((side) => `
+          <div class="x-cell">
+            <p class="sd-label">${side === 'yours' ? 'Yours, kept' : 'Upstream 2.0, kept'}</p>
+            <ul class="sd-checks">${Object.entries(a.kept[side]).map(([k, ok]) => `<li data-tone="${ok ? 'success' : 'danger'}">${esc(k)}</li>`).join('')}</ul>
+          </div>`).join('')
+
+const STATES = [['upstream1', '1.0'], ['yours', 'Yours'], ['upstream2', '2.0'], ['synced', 'Yours + 2.0']]
+const screen = (a, state, label) => a.web
+  ? `<a class="x-shot" href="${a.screens[state].href}"><span class="x-shot-head"><span class="sd-label">${label}</span><span class="sd-subtle">open</span></span><img src="img/${a.id}-${state}.png" alt="${esc(`${a.name}, ${label}`)}" width="1200" height="800" loading="lazy"></a>`
+  : `<div class="x-shot"><span class="x-shot-head"><span class="sd-label">${label}</span><span class="sd-subtle">${esc(a.lang)}</span></span>${term(a.screens[state].command, a.screens[state].output, `${a.name}, ${label}`)}</div>`
+
+const FEATURES = [
+  ['Merges by intent', 'Every change is a commit that says what you asked for. The agent rebuilds that on upstream\'s new code.'],
+  ['Your check decides', 'Nothing lands until your tests, and the tests upstream just shipped, pass.'],
+  ['All or nothing', 'Three tries, then it puts everything back and exits non-zero.'],
+  ['Remembers resolutions', 'git rerere replays every conflict it has solved before. The agent only sees new ones.'],
+  ['Daily sync, if you want', '`xtend daily on` adds a GitHub Action that syncs every day. A failure emails you.'],
+  ['Any agent', 'Claude Code, Codex, Gemini, Amp, opencode, or your own command.'],
+  ['Any language', 'It runs your project\'s own check. It never parses code.'],
+  ['Owners decide', 'XTEND.md, GitHub settings and CONTRIBUTING.md say what forks may send.'],
+  ['Gives back clean', 'Ports only the changes you pick onto upstream, one commit each.'],
+  ['Safe around agents', 'Git runs with hooks off. Changed git config or hooks get put back.'],
+  ['Asks before it sends', 'Nothing goes upstream without you picking it, never from CI, one open offer per project.'],
+  ['No service', 'One file, no dependencies. Your GitHub fork holds everything.'],
 ]
 
-const runLog = d.steps.map((s, i) => `
-      <details class="x-log">
-        <summary><span class="x-log-row">
-          <span class="x-log-n sd-faint">${String(i + 1).padStart(2, '0')}</span>
-          <span><span class="sd-badge"${s.who === 'owner' ? ' data-tone="extra"' : ''}>${s.who}</span></span>
-          <span class="x-log-title">${esc(s.title)} <code class="sd-subtle">${esc(s.command.length > 60 ? s.command.slice(0, 57) + '..."' : s.command)}</code></span>
-          <span class="sd-status" data-tone="${s.status === 0 ? 'success' : 'danger'}">${s.status === 0 ? 'ok' : `exit ${s.status}`}</span>
-          <span class="sd-subtle x-log-t">${minutes(s.seconds)}</span>
-        </span></summary>
-        ${term(s, 200)}
-      </details>`).join('')
+const CHAPTERS = [
+  ['Owner', ['The owner writes a ref sheet once']],
+  ['Fork and change', ['You take your own copy', 'You make it yours']],
+  ['Plain git', ['What plain git does with it', 'And the check after it']],
+  ['xtend sync', ['xtend merges it for you', 'The check, on the merged code', 'And again tomorrow']],
+  ['From memory', ['Throw the merge away', 'Merge it again from scratch']],
+  ['Give back', ['A small fix the owner asked for', 'What upstream would take', 'Offer only that fix']],
+]
+const OPEN = ['What plain git does with it', 'xtend merges it for you', 'Merge it again from scratch']
+const kind = (s) => s.status !== 0 ? 'bad' : /asking agent/.test(s.output) || s.title.startsWith('The owner writes') ? (s.who === 'owner' ? 'owner' : 'agent') : 'tool'
+const pad = (n) => String(n).padStart(2, '0')
+function runLog(a) {
+  const longest = Math.max(...a.steps.map((x) => x.seconds))
+  const agent = a.steps.filter((s) => kind(s) === 'agent' || kind(s) === 'owner').reduce((t, s) => t + s.seconds, 0)
+  const failed = a.steps.filter((s) => s.status !== 0).length
+  const n = (s) => a.steps.indexOf(s) + 1
+  const strip = a.steps.map((s) => `<a class="x-tl-seg" data-kind="${kind(s)}" href="#run-${a.id}-${n(s)}" style="flex-grow:${Math.max(s.seconds, 0.6)}" title="${esc(`${pad(n(s))} ${s.title}, ${minutes(s.seconds)}`)}" tabindex="-1"><span>${pad(n(s))}</span></a>`).join('')
+  const row = (s) => `
+        <details class="x-log" id="run-${a.id}-${n(s)}"${OPEN.includes(s.title) ? ' open' : ''}>
+          <summary><span class="x-log-row">
+            <span class="x-log-n sd-faint">${pad(n(s))}</span>
+            <span><span class="sd-badge"${s.who === 'owner' ? ' data-tone="extra"' : ''}>${s.who}</span></span>
+            <span class="x-log-title">${esc(s.title)} <code class="sd-subtle">${esc(s.command.length > 60 ? s.command.slice(0, 57) + '..."' : s.command)}</code></span>
+            <span class="sd-status" data-tone="${s.status === 0 ? 'success' : 'danger'}">${s.status === 0 ? 'ok' : `exit ${s.status}`}</span>
+            <span class="x-log-dur"><span class="x-bar" data-kind="${kind(s)}"><i style="width:${Math.max(2, Math.round((s.seconds / longest) * 100))}%"></i></span><span class="sd-subtle x-log-t">${minutes(s.seconds)}</span></span>
+          </span></summary>
+          ${term(s.command, s.output)}
+        </details>`
+  return `
+      <div class="x-cells x-cells-4 x-run-stats">
+        <div class="x-cell"><span class="x-num">${minutes(total(a))}</span><span class="sd-label">End to end</span></div>
+        <div class="x-cell"><span class="x-num">${minutes(agent)}</span><span class="sd-label">Agent at work</span></div>
+        <div class="x-cell"><span class="x-num">${a.steps.length}</span><span class="sd-label">Steps</span></div>
+        <div class="x-cell"><span class="x-num">${failed}</span><span class="sd-label">Failed steps, all plain git</span></div>
+      </div>
+      <div class="x-tl" aria-hidden="true">${strip}</div>
+      <ul class="x-tl-key" aria-label="Timeline key">
+        <li data-kind="agent">agent at work</li><li data-kind="owner">owner's agent</li><li data-kind="tool">git, xtend or check</li><li data-kind="bad">failed</li>
+      </ul>
+      <div class="x-logs">${CHAPTERS.map(([name, titles]) => {
+        const steps = a.steps.filter((s) => titles.includes(s.title))
+        return steps.length ? `
+        <p class="sd-label x-chapter"><span>${name}</span><span class="sd-subtle">${minutes(steps.reduce((t, s) => t + s.seconds, 0))}</span></p>${steps.map(row).join('')}` : ''
+      }).join('')}
+      </div>
+      <p class="sd-subtle x-rerun">Ran with <code>${esc(a.agent.split(' --')[0])}</code> on ${a.generated.slice(0, 10)}. Rerun it with <code>node demo/run.mjs ${a.id}</code>.</p>`
+}
+
+const reusedCount = (a) => Number((a.replay.output.match(/reused (\d+) resolution/) || [0, 0])[1])
+const memory = (a) => (a.replay.agent ? 'agent fixed the rest' : `no agent · ${minutes(a.replay.seconds)}`)
+
+const css = apps.map((a) => `html[data-app="${a.id}"] .x-app[data-app="${a.id}"]`).join(',\n')
+const total = (a) => a.steps.reduce((t, s) => t + s.seconds, 0)
 
 const html = `<!doctype html>
-<html lang="en" data-theme="ink">
+<html lang="en" data-theme="ink" data-app="${first}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>xTend: make any repo yours, keep getting upstream</title>
   <meta name="description" content="Your agent changes an open-source project however you want. xTend keeps merging upstream in, and resolves the conflicts by what your changes were for.">
   <meta property="og:title" content="xTend: make any repo yours, keep getting upstream">
-  <meta property="og:description" content="Fork, bend it with your agent, and keep getting upstream. Plain git hit ${conflicts} conflicts in this demo. xTend merged it and both test suites passed.">
+  <meta property="og:description" content="Fork it, change it with your agent, keep getting upstream. Shown on ${apps.map((a) => a.lang).join(', ')} projects.">
   <meta property="og:image" content="https://medalink.github.io/xtend/img/og.png">
   <meta name="twitter:card" content="summary_large_image">
-  <script>try { const t = localStorage.getItem("sd-theme"); if (t) document.documentElement.dataset.theme = t } catch {}</script>
+  <script>
+    try { const t = localStorage.getItem("sd-theme"); if (t) document.documentElement.dataset.theme = t } catch {}
+    try { const a = new URLSearchParams(location.search).get("app") || localStorage.getItem("xtend-app"); if (${JSON.stringify(apps.map((a) => a.id))}.includes(a)) document.documentElement.dataset.app = a } catch {}
+  </script>
   <link rel="stylesheet" href="vendor/signal/signal.css">
   <link rel="stylesheet" href="board.css">
-  <script type="module">import { init } from "./vendor/signal/signal.js"; init()</script>
+  <style>.x-app { display: none }
+${css} { display: block }</style>
+  <script type="module">
+    import { init } from "./vendor/signal/signal.js"; init()
+    const root = document.documentElement
+    const show = (id) => {
+      root.dataset.app = id
+      for (const b of document.querySelectorAll("[data-pick]")) b.setAttribute("aria-pressed", String(b.dataset.pick === id))
+    }
+    show(root.dataset.app)
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-pick]")
+      if (!b) return
+      show(b.dataset.pick)
+      try { localStorage.setItem("xtend-app", b.dataset.pick) } catch {}
+      const u = new URL(location.href); u.searchParams.set("app", b.dataset.pick); history.replaceState(null, "", u)
+    })
+  </script>
 </head>
 <body>
 <a class="sd-skip" href="#main">Skip to content</a>
@@ -122,13 +185,12 @@ const html = `<!doctype html>
 <header class="sd-topbar x-top">
   <a class="sd-wordmark" href="#main">xTend</a>
   <nav class="sd-nav sd-desktop-only" aria-label="Site">
-    <a href="#hard">The hard case</a>
-    <a href="#langs">Languages</a>
-    <a href="#states">Screens</a>
-    <a href="#how">How it works</a>
-    <a href="#owners">Owners</a>
+    <a href="#log">The run</a>
+    <a href="#features">Features</a>
+    <a href="#merge">The merge</a>
+    <a href="#screens">Screens</a>
     <a href="#give">Give back</a>
-    <a href="#log">Run log</a>
+    <a href="#owners">Owners</a>
   </nav>
   <div class="sd-topbar-end">
     <a class="sd-btn sd-btn-sm sd-btn-primary" href="${REPO}">GitHub</a>
@@ -136,211 +198,167 @@ const html = `<!doctype html>
 </header>
 
 <main id="main" tabindex="-1">
-  <section class="x-hero">
+  <section class="x-hero" aria-labelledby="hero-h">
     <div class="x-wrap x-hero-grid">
       <div class="x-hero-copy">
-        <div>
-          <span class="sd-badge" data-tone="success">Real run · ${day} · ${agentName}</span>
-          <h1 class="x-h1">Make any repo yours. <em>Keep getting upstream.</em></h1>
-        </div>
+        <h1 id="hero-h" class="x-h1">Make any repo yours. <em>Keep getting upstream.</em></h1>
         <div class="x-stack">
-          <p class="sd-lead">Your agent changes an open-source project however you want. xTend keeps merging upstream in, and when the two collide, it resolves them by what your changes were for.</p>
+          <p class="sd-lead">Your agent changes the project. xTend keeps merging upstream in, and settles every collision by what your change was for.</p>
           <div class="x-install">
             <span class="sd-faint" aria-hidden="true">$</span><code id="cmd">npx github:Medalink/xtend get owner/repo</code>
             <button class="sd-btn sd-btn-sm sd-btn-ghost" data-sd-copy="#cmd">Copy</button>
           </div>
+          ${pick}
         </div>
       </div>
+${each((a) => `
+      <div class="x-window">
+        <div class="sd-titlebar" role="region" aria-label="${esc(a.name)} run">
+          <span class="sd-titlebar-brand"><b>${esc(a.name)}</b> <span class="sd-subtle">${esc(a.lang)}</span></span>
+        </div>
+        <div class="x-versus">
+          <div class="x-cell">
+            <span class="sd-label">git merge</span>
+            <span class="x-num">${a.files.conflicted.length}<small> ${a.files.conflicted.length === 1 ? 'conflict' : 'conflicts'}</small></span>
+            <span class="sd-status" data-tone="danger">check ${a.plain.checkPassed ? 'passes' : 'fails'}</span>
+          </div>
+          <div class="x-cell">
+            <span class="sd-label">xtend sync</span>
+            <span class="x-num">${minutes(a.sync.seconds)}</span>
+            <span class="sd-status" data-tone="success">check passes</span>
+          </div>
+          <div class="x-cell">
+            <span class="sd-label">Kept</span>
+            <span class="x-num">${Object.values(a.kept.yours).filter(Boolean).length + Object.values(a.kept.upstream).filter(Boolean).length}<small> of ${Object.keys(a.kept.yours).length + Object.keys(a.kept.upstream).length}</small></span>
+            <span class="sd-status" data-tone="success">features from both sides</span>
+          </div>
+          <div class="x-cell">
+            <span class="sd-label">Again from scratch</span>
+            <span class="x-num">${reusedCount(a)}<small> of ${a.files.conflicted.length}</small></span>
+            <span class="sd-status" data-tone="${a.replay.agent ? 'pending' : 'success'}">remembered · ${esc(memory(a))}</span>
+          </div>
+        </div>
+        <div class="x-window-shot">${screen(a, 'synced', 'Yours + 2.0')}</div>
+      </div>`)}
+    </div>
+  </section>
 
-      <div class="x-window" data-sd-ornaments data-sd-ornaments-size="160">
-        <div class="sd-titlebar" role="region" aria-label="Window">
-          <span class="sd-titlebar-brand"><b>xtend sync</b></span>
-          <div class="sd-titlebar-end">
-            <span class="sd-titlebar-metric sd-desktop-only">PLAIN GIT <b>${conflicts} CONFLICTS</b></span>
-            <span class="sd-titlebar-metric sd-desktop-only">XTEND <b>${minutes(sync.seconds)}</b></span>
-          </div>
-        </div>
-        <div class="x-window-body">
-          <div class="x-window-main">
-            ${term(sync)}
-            ${term(after)}
-            <ul class="sd-checks">
-              <li data-tone="success">${conflicts} conflicted files resolved by intent</li>
-              <li data-tone="success">Upstream's new tests pass on your redesign</li>
-              <li data-tone="success">The next sync is a no-op</li>
-            </ul>
-          </div>
-          <a class="x-window-shot" href="states/4-synced/index.html">
-            <img src="img/4-synced.png" alt="The merged app: the fork's dark ring design with upstream's session dots" width="1200" height="800">
-          </a>
-        </div>
+  <section class="x-section" id="log" aria-labelledby="the-run-h">
+    <div class="x-wrap">${head('01', 'The run', 'Every step, unedited.', 'Real agent, real output.')}
+${each(runLog)}
+    </div>
+  </section>
+
+  <section class="x-section" id="features" aria-labelledby="features-h">
+    <div class="x-wrap">
+      <p class="sd-label x-kicker"><b>02</b> Features</p>
+      <h2 id="features-h" class="x-h2">Your fork stays yours. <em>Upstream keeps coming.</em></h2>
+      <div class="x-cells x-cells-4 x-features">${FEATURES.map(([t, d], i) => `
+        <div class="x-cell"><span class="x-step">${String(i + 1).padStart(2, '0')}</span><h3 class="sd-title">${t}</h3><p class="sd-muted">${esc(d).replace(/`([^`]+)`/g, '<code>$1</code>')}</p></div>`).join('')}
       </div>
     </div>
   </section>
 
-  <section class="x-section" id="hard" aria-labelledby="hard-h">
-    <div class="x-wrap">
-      <p class="sd-label x-kicker"><b>01</b> The hard case</p>
-      <h2 id="hard-h" class="x-h2">You rewrote the app. <em>Upstream rewrote it too.</em></h2>
-      <p class="sd-lead x-measure">The fork moved all of the DOM code from <code>app.js</code> into a new <code>ui.js</code>, restyled it and renamed the modes. Upstream then shipped a feature through <code>app.js</code> and renamed modes to presets. Git follows the move, then stops on ${conflicts} of ${yours.files} files, and the tests crash on conflict markers. Fixing that by hand means understanding both sides.</p>
-
-      <div class="x-cells x-cells-4">
-        <div class="x-cell"><span class="x-num">+${yours.plus}<small> −${yours.minus}</small></span><span class="sd-label">Your change, ${yours.files} files</span></div>
-        <div class="x-cell"><span class="x-num">+${theirs.plus}<small> −${theirs.minus}</small></span><span class="sd-label">Upstream 2.0, ${theirs.files} files</span></div>
-        <div class="x-cell"><span class="x-num">${conflicts}<small> of ${Math.max(yours.files, theirs.files)}</small></span><span class="sd-label">Files plain git can't merge</span><span class="sd-status" data-tone="danger">tests ${d.plain.testsPassed ? 'pass' : 'fail'}</span></div>
-        <div class="x-cell"><span class="x-num">0</span><span class="sd-label">Left for you after xtend sync</span><span class="sd-status" data-tone="success">tests pass</span></div>
+  <section class="x-section" id="merge" aria-labelledby="the-merge-h">
+    <div class="x-wrap">${head('03', 'The merge', 'Both sides rewrote the same code.', 'Git stops. xTend finishes.')}
+${each((a) => `
+      <div class="x-split x-split-top">
+        <div class="x-frame">
+          <div class="x-frame-head"><span class="sd-label">You asked</span></div>
+          <p class="x-quote">${esc(a.change)}</p>
+        </div>
+        <div class="x-frame">
+          <div class="x-frame-head"><span class="sd-label">Upstream shipped</span></div>
+          <p class="x-quote">${esc(a.upstream)}</p>
+        </div>
       </div>
-
+      <div class="x-frame x-gap">
+        ${graph(a)}
+        ${fileMap(a)}
+      </div>
       <div class="x-split">
         <div class="x-frame">
-          <div class="x-frame-head"><span class="sd-label">git merge upstream/main</span><span class="sd-status" data-tone="danger">${conflicts} conflicts</span></div>
-          <div class="x-frame-body">${term(plain)}${term(plainTests, 5, true)}</div>
+          <div class="x-frame-head"><span class="sd-label">git merge upstream/main</span><span class="sd-status" data-tone="danger">${plural(a.files.conflicted.length, 'conflict')}</span></div>
+          <div class="x-frame-body">${term(step(a, 'What plain git does with it').command, tail(step(a, 'What plain git does with it').output, 8))}${term(a.check, a.plain.check.split('\n').slice(0, 6).join('\n'))}</div>
         </div>
         <div class="x-frame">
-          <div class="x-frame-head"><span class="sd-label">xtend sync</span><span class="sd-status" data-tone="success">merged · ${minutes(sync.seconds)}</span></div>
-          <div class="x-frame-body">${term(sync)}${term(after, 8)}</div>
+          <div class="x-frame-head"><span class="sd-label">xtend sync</span><span class="sd-status" data-tone="success">merged · ${minutes(a.sync.seconds)}</span></div>
+          <div class="x-frame-body">${term('xtend sync', tail(a.sync.output, 12))}</div>
         </div>
       </div>
-
-      <div class="x-cells x-cells-3">
-        <div class="x-cell">
-          <p class="sd-label">What your one sentence did</p>
-          <ul class="sd-checks">${fileRows}</ul>
-        </div>
-        <div class="x-cell">
-          <p class="sd-label">Kept from you</p>
-          <ul class="sd-checks">${checks(yoursKept)}</ul>
-        </div>
-        <div class="x-cell">
-          <p class="sd-label">Kept from upstream</p>
-          <ul class="sd-checks">${checks(upstreamKept)}</ul>
-        </div>
+      <div class="x-cells x-cells-2">${kept(a)}
       </div>
-
-      <div class="x-cells x-cells-3">
-        <div class="x-cell">
-          <span class="x-step">01</span>
-          <h3 class="sd-title">Intent, not lines</h3>
-          <p class="sd-muted">Each customization is a commit whose message says what you wanted. The agent reads those, so it rebuilds "dark, ring, 50 minutes" on top of the new code instead of picking hunks.</p>
-        </div>
-        <div class="x-cell">
-          <span class="x-step">02</span>
-          <h3 class="sd-title">Both test suites decide</h3>
-          <p class="sd-muted">Upstream's tests came with the merge. xTend runs your check after every attempt and sends the failures back to the agent. Nothing is committed until it passes.</p>
-        </div>
-        <div class="x-cell">
-          <span class="x-step">03</span>
-          <h3 class="sd-title">Or nothing changes</h3>
-          <p class="sd-muted">If three tries don't produce a clean, passing tree, xTend puts everything back as it was and exits non-zero. A failed sync never leaves a half-merge behind.</p>
-        </div>
-      </div>
+      <div class="x-frame x-gap">
+        <div class="x-frame-head"><span class="sd-label">The same merge, done again</span><span class="sd-status" data-tone="${a.replay.agent ? 'pending' : 'success'}">${esc(memory(a))}</span></div>
+        ${a.replay.agent ? `
+        <ul class="sd-checks x-memory">
+          <li data-tone="success"><span>git replayed all ${a.files.conflicted.length} conflict resolution${a.files.conflicted.length === 1 ? '' : 's'}: ${a.files.conflicted.map((f) => `<code>${esc(f)}</code>`).join(', ')}</span></li>
+          <li data-tone="pending"><span>The first merge also adapted your code to upstream's new API, in files git merges without a conflict. rerere only remembers conflicts, so the check failed and the agent fixed just that.</span></li>
+        </ul>` : `
+        <div class="x-race">
+          <div class="x-race-row"><span class="sd-label">First time</span><span class="x-bar" data-kind="agent"><i style="width:100%"></i></span><span class="sd-subtle x-bar-n">${minutes(a.sync.seconds)}</span></div>
+          <div class="x-race-row"><span class="sd-label">From memory</span><span class="x-bar" data-kind="tool"><i style="width:${Math.max(1, Math.round((a.replay.seconds / a.sync.seconds) * 100))}%"></i></span><span class="sd-subtle x-bar-n">${minutes(a.replay.seconds)}</span></div>
+        </div>`}
+        <div class="x-frame-body">${term('xtend sync', a.replay.output)}</div>
+      </div>`)}
     </div>
   </section>
 
-${examples.length ? `
-  <section class="x-section" id="langs" aria-labelledby="langs-h">
-    <div class="x-wrap">
-      <p class="sd-label x-kicker"><b>02</b> Any language</p>
-      <h2 id="langs-h" class="x-h2">${examples.map((e) => e.lang).join(', ').replace(/, ([^,]*)$/, ' and $1')}. <em>Same story.</em></h2>
-      <p class="sd-lead x-measure">Each project got one sentence from its fork, then an upstream release that rewrote the same code. xTend knows nothing about these languages. It runs the project's own check, and the agent does the rest.</p>
-      <div class="x-cells x-cells-${examples.length}">${exampleCards}
-      </div>
-    </div>
-  </section>
-` : ''}
-  <section class="x-section" id="states" aria-labelledby="states-h">
-    <div class="x-wrap">
-      <p class="sd-label x-kicker"><b>03</b> Screens</p>
-      <h2 id="states-h" class="x-h2">Four states of one app. <em>Click any to run it.</em></h2>
-      <div class="x-shots">
-        ${shots.map(([id, name, sub]) => `
-        <a class="x-shot" href="states/${id}/index.html">
-          <span class="x-shot-head"><span class="sd-label">${name}</span><span class="sd-subtle">open</span></span>
-          <img src="img/${id}.png" alt="${esc(name)}" width="1200" height="800" loading="lazy">
-          <span class="x-shot-sub sd-muted">${sub}</span>
-        </a>`).join('')}
-      </div>
+  <section class="x-section" id="screens" aria-labelledby="screens-h">
+    <div class="x-wrap">${head('04', 'Screens', 'Four states of one app.', 'Same input each time.')}
+${each((a) => `
+      <div class="x-shots">${STATES.map(([s, label]) => screen(a, s, label)).join('')}</div>`)}
     </div>
   </section>
 
-  <section class="x-section" id="how" aria-labelledby="how-h">
-    <div class="x-wrap">
-      <p class="sd-label x-kicker"><b>04</b> How it works</p>
-      <h2 id="how-h" class="x-h2">Five commands. <em>Tools you already have.</em></h2>
-      <div class="x-cells x-cells-5">
-        <div class="x-cell"><code class="x-cmd">xtend get owner/repo</code><p class="sd-muted">Forks it on GitHub, clones it and writes the ref sheet. It also turns on a daily Action that runs <code>xtend sync</code> for you.</p></div>
-        <div class="x-cell"><code class="x-cmd">xtend "make it dark"</code><p class="sd-muted">Your agent makes the change with the ref sheet in hand. Your check has to pass, and the commit message keeps what you asked for.</p></div>
-        <div class="x-cell"><code class="x-cmd">xtend sync</code><p class="sd-muted">Merges upstream with git. When git can't finish, the agent does, guided by your intent. It retries until the check passes, or nothing changes.</p></div>
-        <div class="x-cell"><code class="x-cmd">xtend sheet</code><p class="sd-muted">Reads the code and writes a short map for agents: layout, commands, where to extend, and which files churn.</p></div>
-        <div class="x-cell"><code class="x-cmd">xtend share</code><p class="sd-muted">Shows what upstream accepts. Then it ports the changes you pick onto upstream's code and offers them the way the owner asks.</p></div>
-      </div>
-      <dl class="sd-kv x-kv">
-        <dt>Storage</dt><dd>Your GitHub fork. No service, no database, no account.</dd>
-        <dt>Merging</dt><dd><code>git merge</code>, with <code>rerere</code> on</dd>
-        <dt>Intent</dt><dd>Your commit messages</dd>
-        <dt>Agent</dt><dd>Claude Code, Codex, Gemini, Amp, opencode, or any command: <code>xtend agent &lt;name or command&gt;</code></dd>
-        <dt>Gate</dt><dd>Your <code>check</code> command, such as <code>npm test</code></dd>
-        <dt>Giving back</dt><dd>One draft PR or issue through <code>gh</code>, only where the owner allows it</dd>
-        <dt>Size</dt><dd>One file, no dependencies</dd>
-      </dl>
+  <section class="x-section" id="give" aria-labelledby="give-back-h">
+    <div class="x-wrap">${head('05', 'Give back', 'Offer what the owner asked for.', 'Only that.')}
+${each((a) => `
+      <div class="x-split">
+        <div class="x-frame">
+          <div class="x-frame-head"><span class="sd-label">The owner's XTEND.md</span></div>
+          <p class="x-quote">${esc(a.wanted)}</p>
+          <div class="x-frame-body">${term('xtend share', a.share)}</div>
+        </div>
+        <div class="x-frame">
+          <div class="x-frame-head"><span class="sd-label">The offer</span><span class="sd-status" data-tone="success">upstream's check passes</span></div>
+          <div class="x-frame-body">
+            <p class="x-quote x-quote-in">${esc(a.fix)}</p>
+            <ul class="x-files x-files-plain">${a.offer.files.map((f) => `<li class="x-file"><code>${esc(f.file)}</code><span class="x-bar" data-kind="offer"><i style="width:${Math.max(3, Math.min(100, (f.add + f.del) * 4))}%"></i></span><span class="x-bar-n sd-subtle">+${f.add} −${f.del}</span></li>`).join('')}</ul>
+            ${a.offer.probe ? term(a.offer.probe.command, a.offer.probe.output) : ''}
+            <ul class="sd-checks">
+              <li data-tone="success">None of your ${esc(Object.keys(a.kept.yours).length)} customizations came along</li>
+              <li data-tone="success">One commit, with its cherry-pick command</li>
+            </ul>
+            <details class="x-log"><summary>What the owner reads</summary><pre class="x-term x-sheet" tabindex="0" aria-label="The offer">${esc(a.offer.body)}</pre></details>
+          </div>
+        </div>
+      </div>`)}
+      <ul class="x-guards" aria-label="Limits on offers">
+        <li class="sd-badge">A person picks every change</li>
+        <li class="sd-badge">Never from CI</li>
+        <li class="sd-badge">One open offer per project</li>
+        <li class="sd-badge">Never re-offers what the owner closed</li>
+        <li class="sd-badge">Stops where CONTRIBUTING.md says no</li>
+      </ul>
     </div>
   </section>
 
   <section class="x-section" id="owners" aria-labelledby="owners-h">
-    <div class="x-wrap x-split">
-      <div>
-        <p class="sd-label x-kicker"><b>05</b> Owners</p>
-        <h2 id="owners-h" class="x-h2">Nothing to maintain. <em>One file if you want.</em></h2>
-        <p class="sd-lead">Your project works with xTend as it is. To help people who extend it, run <code>xtend sheet</code> once and commit <code>XTEND.md</code>. It works like a spec sheet instead of an MCP server: every agent reads it before every change and every merge. Its <code>contributions:</code> line says whether forks may send you a pull request, an issue or nothing, and what you would welcome.</p>
-      </div>
-      <div class="x-frame">
-        <div class="x-frame-head"><span class="sd-label">XTEND.md</span><span class="sd-subtle">written by xtend sheet in this run</span></div>
-        <pre class="x-term x-sheet" tabindex="0" aria-label="XTEND.md">${esc(d.sheet || '')}</pre>
-      </div>
-    </div>
-  </section>
-
-  <section class="x-section" id="give" aria-labelledby="give-h">
-    <div class="x-wrap">
-      <p class="sd-label x-kicker"><b>06</b> Give back</p>
-      <h2 id="give-h" class="x-h2">Offer what the owner wants. <em>Only that.</em></h2>
-      <p class="sd-lead x-measure">The owner's <code>XTEND.md</code> says they welcome accessibility fixes. You made one on top of your redesign. <code>xtend share</code> ports just that fix onto upstream's own code, without your redesign, and upstream's tests pass on it.</p>
+    <div class="x-wrap">${head('06', 'Owners', 'Nothing to maintain.', 'One file if you want.')}
       <div class="x-split">
-        <div class="x-frame">
-          <div class="x-frame-head"><span class="sd-label">xtend share</span><span class="sd-subtle">sends nothing</span></div>
-          <div class="x-frame-body">${term(shareList)}${term(shareSend, 12)}</div>
+        <ul class="sd-checks x-owner">
+          <li data-tone="success"><span><code>xtend sheet</code> writes <code>XTEND.md</code>, a map every agent reads first</span></li>
+          <li data-tone="success"><span><code>contributions: pr</code>, <code>issue</code> or <code>none</code> decides what forks may send</span></li>
+          <li data-tone="success"><span>The lines under it say what you would welcome</span></li>
+          <li data-tone="success"><span>No sheet? Forks write their own, privately</span></li>
+        </ul>
+        <div>${each((a) => `
+          <div class="x-frame">
+            <div class="x-frame-head"><span class="sd-label">XTEND.md</span><span class="sd-subtle">${esc(a.name)}, written by xtend sheet</span></div>
+            <pre class="x-term x-sheet" tabindex="0" aria-label="XTEND.md for ${esc(a.name)}">${esc(a.sheet)}</pre>
+          </div>`)}
         </div>
-        <div class="x-frame">
-          <div class="x-frame-head"><span class="sd-label">The offer, as the owner reads it</span><span class="sd-status" data-tone="success">upstream tests pass</span></div>
-          <pre class="x-term x-sheet" tabindex="0" aria-label="The offer">${esc(d.offer.body)}</pre>
-        </div>
-      </div>
-      <div class="x-cells x-cells-3">
-        <div class="x-cell">
-          <span class="x-step">01</span>
-          <h3 class="sd-title">The owner decides</h3>
-          <p class="sd-muted">xTend reads <code>XTEND.md</code>, GitHub's settings and <code>CONTRIBUTING.md</code> before it builds anything. It quotes the line that says no, and stops. Nothing you pass overrides it.</p>
-        </div>
-        <div class="x-cell">
-          <span class="x-step">02</span>
-          <h3 class="sd-title">Pick, don't merge</h3>
-          <p class="sd-muted">Each change is one commit on upstream's latest code, with the cherry-pick command under it. The owner takes one, some or all.</p>
-        </div>
-        <div class="x-cell">
-          <span class="x-step">03</span>
-          <h3 class="sd-title">No floods</h3>
-          <p class="sd-muted">A person picks every change. xTend never offers from CI and keeps one open offer per project. It never re-offers what the owner closed.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="x-section" id="log" aria-labelledby="log-h">
-    <div class="x-wrap">
-      <p class="sd-label x-kicker"><b>07</b> Run log</p>
-      <h2 id="log-h" class="x-h2">Every step, unedited. <em>${minutes(total)} end to end.</em></h2>
-      <p class="sd-muted x-measure">This is real output from <code>demo/run.mjs</code>, with the real agent (<code>${esc(d.agent.split(' --')[0])}</code>). Run it yourself with <code>node demo/run.mjs</code>.</p>
-      <div class="x-logs">${runLog}
       </div>
     </div>
   </section>
@@ -352,7 +370,7 @@ ${examples.length ? `
         <a class="sd-btn sd-btn-lg sd-btn-primary" href="${REPO}">Get xTend</a>
         <a class="sd-btn sd-btn-lg" href="${REPO}/blob/main/xtend.mjs">Read the code</a>
       </div>
-      <p class="sd-subtle">From <a href="${TWEET}">an idea by Thariq</a>: modify software with agents and get upstream merged in automatically.</p>
+      <p class="sd-subtle">From <a href="${TWEET}">an idea by Thariq</a>.</p>
     </div>
   </section>
 </main>

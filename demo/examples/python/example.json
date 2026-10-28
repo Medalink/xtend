@@ -3,7 +3,7 @@
   "lang": "Python",
   "about": "A habit tracker CLI that keeps daily check-ins in a JSON file and reports streaks.",
   "check": "python -m unittest -q",
-  "change": "Give every habit an optional weekly goal: add a `goal` command that sets it, a `goal_met(store, name, today)` function that is true once this ISO week's check-ins reach the goal, and a `GOAL MET` marker beside such habits in the report.",
+  "change": "Give every habit an optional weekly goal: add a `goal NAME COUNT` command that sets it, a `goal_met(store, name, today)` function that is true once this ISO week's check-ins reach the goal, and a `GOAL MET` marker beside such habits in the report.",
   "upstream": "streaks 2.0: freezes, notes on check-ins, renamed API, versioned store",
   "kept": {
     "yours": {
@@ -16,5 +16,17 @@
       "Renamed check-in": "def log_done\\(",
       "Versioned store": "def migrate\\("
     }
+  },
+  "wanted": "Clearer error messages are welcome.",
+  "fix": "When a command names a habit that does not exist, make the error list the habits that do.",
+  "screens": {
+    "upstream1": "python cli.py add read && python cli.py add run && python cli.py done read && python cli.py report",
+    "yours": "python cli.py add read && python cli.py add run && python cli.py goal read 1 && python cli.py done read && python cli.py report",
+    "upstream2": "python cli.py add read && python cli.py add run && python cli.py done read \"chapter 3\" && python cli.py report",
+    "synced": "python cli.py add read && python cli.py add run && python cli.py goal read 1 && python cli.py done read \"chapter 3\" && python cli.py report"
+  },
+  "offer": {
+    "run": "python cli.py add read && python cli.py done raed",
+    "has": "\\bread\\b"
   }
 }

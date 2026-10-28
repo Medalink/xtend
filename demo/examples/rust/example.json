@@ -16,5 +16,15 @@
       "Entry parser renamed": "fn parse_entry",
       "Hourly buckets": "by_hour"
     }
+  },
+  "wanted": "Report lines that help spot trouble faster are welcome.",
+  "fix": "End the report with a line starting \"Error rate:\" that shows errors as a whole-number percentage of parsed entries.",
+  "sample": "2026-10-27T09:58:12 INFO started\n2026-10-27T10:00:02 ERROR disk full\n2026-10-27T10:04:40 WARN slow query\n2026-10-27T10:12:09 ERROR disk full\n2026-10-27T11:01:33 ERROR timeout\n2026-10-27T11:02:00 DEBUG cache warm\n2026-10-27T11:07:51 INFO done\n",
+  "screens": {
+    "cmd": "cargo run --quiet -- {sample}"
+  },
+  "offer": {
+    "run": "cargo run --quiet -- {sample}",
+    "has": "Error rate:"
   }
 }

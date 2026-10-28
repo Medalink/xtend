@@ -1,0 +1,33 @@
+{
+  "name": "pomo",
+  "lang": "JavaScript",
+  "about": "A Pomodoro timer for the browser.",
+  "check": "node test.js",
+  "change": "Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to \"Deep work\" (50 minutes) and \"Recharge\" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.",
+  "upstream": "Long breaks every 4 sessions, session dots, chime; rename modes to presets",
+  "wanted": "Accessibility fixes are welcome, especially for screen readers.",
+  "fix": "Announce the current mode and the end of each session to screen readers with an aria-live region.",
+  "web": true,
+  "gone": [
+    "app.js"
+  ],
+  "tests": {
+    "file": "test.js",
+    "lines": "^assert"
+  },
+  "offer": {
+    "has": "aria-live"
+  },
+  "kept": {
+    "yours": {
+      "Deep work, 50 min": "Deep work",
+      "Progress ring": "<circle|createElementNS",
+      "Keyboard shortcuts": "keydown"
+    },
+    "upstream": {
+      "Long break every 4": "SESSIONS_PER_LONG_BREAK",
+      "Session dots": "sessions",
+      "Chime": "AudioContext"
+    }
+  }
+}

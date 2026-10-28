@@ -1,0 +1,83 @@
+:root {
+  --bg: #0e0f12;
+  --text: #e6e6e6;
+  --muted: #6b6f78;
+  --track: #1f2228;
+  --accent: #e5675f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5vh;
+  padding: 24px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.tabs, .controls { display: flex; gap: 12px; }
+
+button {
+  border: 1px solid var(--track);
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 20px;
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+button:hover { color: var(--text); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.tabs button.active { color: var(--text); border-color: var(--muted); }
+
+.dial {
+  position: relative;
+  width: min(70vmin, 520px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+}
+
+.ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 2; }
+.ring-track { stroke: var(--track); }
+
+.ring-progress {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  transition: stroke-dashoffset 1s linear;
+}
+
+.time {
+  font-size: min(16vmin, 120px);
+  font-weight: 200;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); min-width: 120px; }
+.primary:hover { color: var(--bg); }

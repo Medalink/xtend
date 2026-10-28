@@ -1,0 +1,273 @@
+{
+  "id": "pomo",
+  "name": "pomo",
+  "lang": "JavaScript",
+  "about": "A Pomodoro timer for the browser.",
+  "check": "node test.js",
+  "change": "Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to \"Deep work\" (50 minutes) and \"Recharge\" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.",
+  "upstream": "Long breaks every 4 sessions, session dots, chime; rename modes to presets",
+  "wanted": "Accessibility fixes are welcome, especially for screen readers.",
+  "fix": "Announce the current mode and the end of each session to screen readers with an aria-live region.",
+  "web": true,
+  "generated": "2026-10-28T01:21:15.520Z",
+  "agent": "claude -p --allowedTools \"Edit,Write,Bash(git rm *),Bash(git mv *)\"",
+  "files": {
+    "yours": [
+      {
+        "file": "app.js",
+        "status": "D",
+        "add": 0,
+        "del": 39
+      },
+      {
+        "file": "index.html",
+        "status": "M",
+        "add": 15,
+        "del": 8
+      },
+      {
+        "file": "style.css",
+        "status": "M",
+        "add": 63,
+        "del": 22
+      },
+      {
+        "file": "test.js",
+        "status": "M",
+        "add": 5,
+        "del": 1
+      },
+      {
+        "file": "timer.js",
+        "status": "M",
+        "add": 7,
+        "del": 3
+      },
+      {
+        "file": "ui.js",
+        "status": "A",
+        "add": 57,
+        "del": 0
+      }
+    ],
+    "theirs": [
+      {
+        "file": "app.js",
+        "status": "M",
+        "add": 33,
+        "del": 8
+      },
+      {
+        "file": "index.html",
+        "status": "M",
+        "add": 7,
+        "del": 2
+      },
+      {
+        "file": "style.css",
+        "status": "M",
+        "add": 10,
+        "del": 0
+      },
+      {
+        "file": "test.js",
+        "status": "M",
+        "add": 16,
+        "del": 2
+      },
+      {
+        "file": "timer.js",
+        "status": "M",
+        "add": 18,
+        "del": 6
+      }
+    ],
+    "conflicted": [
+      "index.html",
+      "style.css",
+      "test.js",
+      "timer.js",
+      "ui.js"
+    ]
+  },
+  "plain": {
+    "status": 1,
+    "checkPassed": false,
+    "check": "~\\you\\pomo\\test.js:2\r\n<<<<<<< HEAD\r\n  ^^\r\nSyntaxError: Unexpected token '<<'\r\n    at wrapSafe (node:internal/modules/cjs/loader:1861:18)\r\n    at Module._compile (node:internal/modules/cjs/loader:1903:20)\r\n    at Object..js (node:internal/modules/cjs/loader:2060:10)\r\n    at Module.load (node:internal/modules/cjs/loader:1651:32)\r\n    at Module._load (node:internal/modules/cjs/loader:1443:12)\r\n    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\r\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)\r\n    at node:internal/main/run_main_module:33:47\r\nNode.js v24.22.1\r"
+  },
+  "sync": {
+    "seconds": 106.4,
+    "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; agent resolved: index.html, style.css, test.js, timer.js, ui.js"
+  },
+  "replay": {
+    "seconds": 17.9,
+    "output": "xtend: merged upstream; reused 5 resolutions git remembered: index.html, style.css, test.js, timer.js, ui.js",
+    "agent": false,
+    "sameTree": true
+  },
+  "kept": {
+    "yours": {
+      "Deep work, 50 min": true,
+      "Progress ring": true,
+      "Keyboard shortcuts": true
+    },
+    "upstream": {
+      "Long break every 4": true,
+      "Session dots": true,
+      "Chime": true
+    }
+  },
+  "screens": {
+    "upstream1": {
+      "href": "states/pomo/upstream1/index.html"
+    },
+    "yours": {
+      "href": "states/pomo/yours/index.html"
+    },
+    "upstream2": {
+      "href": "states/pomo/upstream2/index.html"
+    },
+    "synced": {
+      "href": "states/pomo/synced/index.html"
+    }
+  },
+  "log": "* xtend: Announce the current mode and the end of each session to screen readers with an aria-live region.\n*   xtend: sync upstream/main (ef44bbf)\n|\\  \n| * Long breaks every 4 sessions, session dots, chime; rename modes to presets\n* | xtend: Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to \"Deep work\" (50 minutes) and \"Recharge\" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.\n* | Run the check on every change\n* | xtend: set up\n|/  \n* Add XTEND.md\n* pomo 1.0",
+  "sheet": "# pomo\n\n## What it is\nA single-page Pomodoro timer in plain HTML, CSS and browser JavaScript, with no dependencies and no build step.\nIt has two modes (`focus` 25 min, `break` 5 min), Start/Pause and Reset buttons, and it switches mode automatically when the countdown reaches zero.\nTimer logic is pure functions in `timer.js`, tested with Node's built-in `assert`.\n\n## Map\n- `index.html`: markup. Loads `timer.js` then `app.js` as classic `<script>` tags (no modules); order matters.\n- `timer.js`: pure state logic: `MODES`, `createTimer(mode)`, `tick(t)`, `format(seconds)`. Runs in the browser (globals) and in Node (`module.exports` guard on the last line).\n- `app.js`: DOM wiring. Holds `timer` state and the `interval` handle; `render()`, `setMode()`, `toggle()`, `step()`; event listeners at the bottom.\n- `style.css`: all styling. Flat selectors, hardcoded hex colors (accent `#d9534f`, text `#3b2f2a`, background `#f6f1eb`).\n- `test.js`: Node assertions against `timer.js`; prints `ok` on success.\n- `package.json`: `private`, no dependencies, only the `test` script.\n\n## Build, run, test\n- Build: none.\n- Run: open `index.html` in a browser, or serve the folder, e.g. `npx serve .` or `python -m http.server 8000`, then open `http://localhost:8000`.\n- Test: `npm test` (same as `node test.js`). Exit code 0 and `ok` means it passed; a failed `assert` throws and exits non-zero.\n- Node 18+ is needed for `node:assert/strict`.\n\n## Extension points\n- **New timer mode (e.g. long break):**\n  1. Add an entry to `MODES` in `timer.js`: `long: { label: 'Long break', minutes: 15 }`.\n  2. Add a tab in `index.html` inside `<nav class=\"tabs\">`: `<button data-mode=\"long\">Long break</button>`. Tabs are wired by the `[data-mode]` selector in `app.js`, so you write no JS for the click.\n  3. If it should join the automatic cycle, change the ternary in `step()` in `app.js` (`timer.mode === 'focus' ? 'break' : 'focus'`). That line is the only place that decides which mode comes next.\n  Note: `MODES[mode].label` is not read anywhere yet. The tab text is hardcoded in HTML.\n- **Change durations:** edit `minutes` in `MODES` (`timer.js`). `test.js` reads `MODES.focus.minutes`, so it keeps passing. The `25:00` placeholder in `index.html` (`#time`) is a literal, but `render()` overwrites it on load.\n- **New timer state or behavior (skip, add a minute, counting sessions):** add a pure function to `timer.js` that takes a timer object and returns a new one (copy the `tick` pattern: spread `...t`, never mutate). Add it to the `module.exports` line and assert on it in `test.js`. Then call it from `app.js` as `timer = fn(timer); render()`.\n- **New button/control:** add the element with an `id` to `.controls` in `index.html`, then add `$('id').addEventListener('click', ...)` next to the existing listeners at the bottom of `app.js`. Anything visible must be updated inside `render()`.\n- **Side effects on completion (sound, notification):** put them in `step()` in `app.js`, in the `if (timer.done)` branch, before `setMode(...)`. `setMode` replaces the timer, so `done` is gone after it.\n- **Persistence (localStorage):** save in `render()` or in `toggle`/`setMode`. Restore by replacing the initial `createTimer('focus')` on `app.js` line 1. Keep storage code out of `timer.js` so it stays testable in Node.\n- **Styling/theme:** `style.css`. For a theme, pull the repeated hex values into `:root` custom properties rather than adding more literals.\n- **New source file:** add a `<script src=\"...\">` to `index.html` in dependency order (before `app.js`). If it holds testable logic, give it the same `if (typeof module !== 'undefined') module.exports = {...}` footer as `timer.js` and `require` it in `test.js`.\n\n## Conventions\n- No semicolons, 2-space indent, single quotes, template literals for interpolation.\n- Plain function declarations for named logic; arrow functions only for small helpers (`$`) and callbacks.\n- Timer state is an immutable plain object `{ mode, remaining, running, done }`. Replace it (`timer = { ...timer, ... }`), never mutate it.\n- `remaining` is whole seconds. `format()` turns it into `MM:SS`.\n- `timer.js` must stay DOM-free and side-effect-free; it is the only file Node loads.\n- No frameworks, bundlers, ES modules or npm dependencies. Shared code moves between files as globals because the scripts are classic `<script>` tags.\n- `render()` is the single place that writes to the DOM from state; event handlers update state and then call `render()`.\n- Always `clearInterval(interval)` before starting a new interval or swapping the timer (see `setMode`, `toggle`).\n- DOM hooks: `id` for single elements (`time`, `start`, `reset`), `data-mode` for mode tabs, the `.active` class for the selected tab.\n- Tests: top-level `assert.equal(...)` calls in `test.js` with no test framework, and `console.log('ok')` stays last.\n\n## Hot zones\nHistory is one commit (`pomo 1.0`) that touched every file once, so churn data can't separate them yet. Expect upstream to change these the most:\n- `timer.js`: `MODES` and the timer object shape. Add new modes or functions next to the existing ones; don't reorder or rename `MODES`, `createTimer`, `tick` or `format`, which `app.js` and `test.js` use.\n- `app.js`: `step()` (mode cycling) and `render()`. Put local behavior in new small functions and call them from these with one line each, rather than rewriting them.\n- `index.html`: the `.tabs` and `.controls` blocks and the script order. Add elements; don't restructure.\n- `style.css`: add new rules at the end, or in a separate stylesheet linked after `style.css`, instead of editing existing rules.\n- `test.js`: add new asserts above `console.log('ok')`; leave the existing ones alone.\n- `package.json`: only the `test` script. If you add scripts, keep `test` working as `node test.js`.\n\n## Contributions from forks\ncontributions: pr\n<!-- pr, issue or none. xtend reads this line before a fork offers changes back. List what you would welcome below it. -->\nAccessibility fixes are welcome, especially for screen readers.\n",
+  "share": "xtend: upstream takes pull requests\nThe owner would welcome:\nAccessibility fixes are welcome, especially for screen readers.\nYour changes:\n  1. Redesign pomo into a dark, distraction-free focus app. Replace the li... (6 files, your agent will port it)\n  2. Announce the current mode and the end of each session to screen reade... (3 files, your agent will port it)\nOffer some with: xtend share 1 2",
+  "offer": {
+    "files": [
+      {
+        "file": "announce.js",
+        "status": "A",
+        "add": 6,
+        "del": 0
+      },
+      {
+        "file": "app.js",
+        "status": "M",
+        "add": 3,
+        "del": 2
+      },
+      {
+        "file": "index.html",
+        "status": "M",
+        "add": 2,
+        "del": 0
+      },
+      {
+        "file": "style.css",
+        "status": "M",
+        "add": 2,
+        "del": 0
+      }
+    ],
+    "body": "<!-- xtend offer -->\n\nChanges from a fork of this project, offered back in case you want any of them. Each one is a single commit on `main`. Merge them all, or take any one with the commands under it.\n\n### 1. Announce the current mode and the end of each session to screen readers with an aria-live region.\n\nI added a polite `aria-live` region (`#announce`) to `index.html` and a new `announce.js` that announces the current preset and its length, such as \"Short break, 5 minutes.\", and says which session just finished before that. Upstream's `ui.js` is now called `app.js`, so the `setPreset`/`step()` hooks went there. Because the region has a `visually-hidden` class that upstream's `style.css` doesn't define, I added that rule at the end of the stylesheet.\n\nFiles: `announce.js`, `app.js`, `index.html`, `style.css`. Ported from fork commit `7512cca34ce7`.\n\n```sh\ngit fetch <fork> xtend/offer\ngit cherry-pick f6c08e98b8bddafb8ccd6247861423a5e8f22388\n```\n\nA person picked these. xTend ported them onto your latest code with `claude` and ran `node test.js`. If you close this, xTend will not offer these changes again.",
+    "probe": null
+  },
+  "steps": [
+    {
+      "who": "owner",
+      "title": "The owner writes a ref sheet once",
+      "command": "xtend sheet",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: wrote XTEND.md",
+      "seconds": 140.3,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You take your own copy",
+      "command": "xtend get ~\\pomo",
+      "output": "xtend: upstream ships XTEND.md, using it\nxtend: daily sync is off. Turn it on with: xtend daily on\nxtend: upstream takes pull requests\nxtend: ready in ./pomo. Try: cd pomo && xtend \"describe a change\"",
+      "seconds": 3.7,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You make it yours",
+      "command": "xtend \"Redesign pomo into a dark, distraction-free focus app. Replace the light card with a full-screen dark layout and a large circular SVG progress ring around the time. Rename the modes to \"Deep work\" (50 minutes) and \"Recharge\" (10 minutes). Add keyboard shortcuts: Space starts or pauses, R resets, 1 and 2 switch modes. Move all DOM and rendering code out of app.js into a new ui.js and delete app.js.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 85.8,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What plain git does with it",
+      "command": "git merge upstream/main",
+      "output": "Auto-merging index.html\nCONFLICT (content): Merge conflict in index.html\nAuto-merging style.css\nCONFLICT (content): Merge conflict in style.css\nAuto-merging test.js\nCONFLICT (content): Merge conflict in test.js\nAuto-merging timer.js\nCONFLICT (content): Merge conflict in timer.js\nAuto-merging ui.js\nCONFLICT (content): Merge conflict in ui.js\nAutomatic merge failed; fix conflicts and then commit the result.\nRecorded preimage for 'index.html'\nRecorded preimage for 'style.css'\nRecorded preimage for 'test.js'\nRecorded preimage for 'timer.js'\nRecorded preimage for 'ui.js'",
+      "seconds": 1,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "And the check after it",
+      "command": "node test.js",
+      "output": "~\\you\\pomo\\test.js:2\r\n<<<<<<< HEAD\r\n  ^^\r\nSyntaxError: Unexpected token '<<'\r\n    at wrapSafe (node:internal/modules/cjs/loader:1861:18)\r\n    at Module._compile (node:internal/modules/cjs/loader:1903:20)\r\n    at Object..js (node:internal/modules/cjs/loader:2060:10)\r\n    at Module.load (node:internal/modules/cjs/loader:1651:32)\r\n    at Module._load (node:internal/modules/cjs/loader:1443:12)\r\n    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\r\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)\r\n    at node:internal/main/run_main_module:33:47\r\nNode.js v24.22.1\r",
+      "seconds": 0.5,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "xtend merges it for you",
+      "command": "xtend sync",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; agent resolved: index.html, style.css, test.js, timer.js, ui.js",
+      "seconds": 106.4,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "The check, on the merged code",
+      "command": "node test.js",
+      "output": "ok",
+      "seconds": 1.3,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "And again tomorrow",
+      "command": "xtend sync",
+      "output": "xtend: already up to date",
+      "seconds": 3.2,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Throw the merge away",
+      "command": "git switch -c again HEAD^1",
+      "output": "Switched to a new branch 'again'",
+      "seconds": 0.1,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Merge it again from scratch",
+      "command": "xtend sync",
+      "output": "xtend: merged upstream; reused 5 resolutions git remembered: index.html, style.css, test.js, timer.js, ui.js",
+      "seconds": 17.9,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "A small fix the owner asked for",
+      "command": "xtend \"Announce the current mode and the end of each session to screen readers with an aria-live region.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 60,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What upstream would take",
+      "command": "xtend share",
+      "output": "xtend: upstream takes pull requests\nThe owner would welcome:\nAccessibility fixes are welcome, especially for screen readers.\nYour changes:\n  1. Redesign pomo into a dark, distraction-free focus app. Replace the li... (6 files, your agent will port it)\n  2. Announce the current mode and the end of each session to screen reade... (3 files, your agent will port it)\nOffer some with: xtend share 1 2",
+      "seconds": 4.5,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Offer only that fix",
+      "command": "xtend share 2 --yes",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: branch xtend/offer is ready, with a write-up in .git/xtend-offer.md. Upstream is not on GitHub, so send it the way its owner asks.",
+      "seconds": 53.6,
+      "status": 0
+    }
+  ]
+}

@@ -1,0 +1,235 @@
+{
+  "id": "python",
+  "name": "streaks",
+  "lang": "Python",
+  "about": "A habit tracker CLI that keeps daily check-ins in a JSON file and reports streaks.",
+  "check": "python -m unittest -q",
+  "change": "Give every habit an optional weekly goal: add a `goal NAME COUNT` command that sets it, a `goal_met(store, name, today)` function that is true once this ISO week's check-ins reach the goal, and a `GOAL MET` marker beside such habits in the report.",
+  "upstream": "streaks 2.0: freezes, notes on check-ins, renamed API, versioned store",
+  "wanted": "Clearer error messages are welcome.",
+  "fix": "When a command names a habit that does not exist, make the error list the habits that do.",
+  "web": false,
+  "generated": "2026-10-28T01:22:35.243Z",
+  "agent": "claude -p --allowedTools \"Edit,Write,Bash(git rm *),Bash(git mv *)\"",
+  "files": {
+    "yours": [
+      {
+        "file": "cli.py",
+        "status": "M",
+        "add": 3,
+        "del": 1
+      },
+      {
+        "file": "test_tracker.py",
+        "status": "M",
+        "add": 49,
+        "del": 0
+      },
+      {
+        "file": "tracker.py",
+        "status": "M",
+        "add": 30,
+        "del": 4
+      }
+    ],
+    "theirs": [
+      {
+        "file": "cli.py",
+        "status": "M",
+        "add": 5,
+        "del": 3
+      },
+      {
+        "file": "test_tracker.py",
+        "status": "M",
+        "add": 43,
+        "del": 19
+      },
+      {
+        "file": "tracker.py",
+        "status": "M",
+        "add": 55,
+        "del": 20
+      }
+    ],
+    "conflicted": [
+      "cli.py",
+      "tracker.py"
+    ]
+  },
+  "plain": {
+    "status": 1,
+    "checkPassed": false,
+    "check": "======================================================================\r\nERROR: test_tracker (unittest.loader._FailedTest.test_tracker)\r\n----------------------------------------------------------------------\r\nImportError: Failed to import test module: test_tracker\r\nTraceback (most recent call last):\r\n  File \"C:\\Program Files\\Python314\\Lib\\unittest\\loader.py\", line 433, in _find_test_path\r\n    module = self._get_module_from_name(name)\r\n  File \"C:\\Program Files\\Python314\\Lib\\unittest\\loader.py\", line 374, in _get_module_from_name\r\n    __import__(name)\r\n    ~~~~~~~~~~^^^^^^\r\n  File \"~\\you\\streaks\\test_tracker.py\", line 7, in <module>\r\n    import cli\r\n  File \"~\\you\\streaks\\cli.py\", line 1\r\n    <<<<<<< HEAD\r\n    ^^\r\nSyntaxError: invalid syntax\r\n----------------------------------------------------------------------\r\nRan 1 test in 0.000s\r\nFAILED (errors=1)\r"
+  },
+  "sync": {
+    "seconds": 95.2,
+    "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; agent resolved: cli.py, tracker.py"
+  },
+  "replay": {
+    "seconds": 162.4,
+    "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; reused 2 resolutions git remembered: cli.py, tracker.py; agent fixed what the check reported",
+    "agent": true,
+    "sameTree": false
+  },
+  "kept": {
+    "yours": {
+      "Weekly goal check": true,
+      "Goal command": true,
+      "Report marker": true
+    },
+    "upstream": {
+      "Streak freezes": true,
+      "Renamed check-in": true,
+      "Versioned store": true
+    }
+  },
+  "screens": {
+    "upstream1": {
+      "command": "python cli.py add read && python cli.py add run && python cli.py done read && python cli.py report",
+      "output": "read: 1 day streak\r\nrun: 0 day streak\r"
+    },
+    "yours": {
+      "command": "python cli.py add read && python cli.py add run && python cli.py goal read 1 && python cli.py done read && python cli.py report",
+      "output": "read: 1 day streak GOAL MET\r\nrun: 0 day streak\r"
+    },
+    "upstream2": {
+      "command": "python cli.py add read && python cli.py add run && python cli.py done read \"chapter 3\" && python cli.py report",
+      "output": "read: 1 day streak (chapter 3)\r\nrun: 0 day streak\r"
+    },
+    "synced": {
+      "command": "python cli.py add read && python cli.py add run && python cli.py goal read 1 && python cli.py done read \"chapter 3\" && python cli.py report",
+      "output": "read: 1 day streak GOAL MET (chapter 3)\r\nrun: 0 day streak\r"
+    }
+  },
+  "log": "* xtend: When a command names a habit that does not exist, make the error list the habits that do.\n*   xtend: sync upstream/main (df1831e)\n|\\  \n| * streaks 2.0: freezes, notes on check-ins, renamed API, versioned store\n* | xtend: Give every habit an optional weekly goal: add a `goal NAME COUNT` command that sets it, a `goal_met(store, name, today)` function that is true once this ISO week's check-ins reach the goal, and a `GOAL MET` marker beside such habits in the report.\n* | Run the check on every change\n* | xtend: set up\n|/  \n* Add XTEND.md\n* streaks 1.0",
+  "sheet": "# streaks\n\n## What it is\n\nA small command-line habit tracker in pure Python, using only the standard library and no dependencies.\nHabits and their check-in dates live in a JSON file. `report` prints the current streak of consecutive days for each habit.\n\n## Map\n\n- `tracker.py`: core logic. The store is a plain `dict`: habit name -> sorted list of ISO date strings (`\"2026-03-10\"`).\n  - `load(path)` / `save(path, store)`: the only file I/O. A missing file loads as `{}`. Saves with `indent=2, sort_keys=True`.\n  - `add_habit(store, name)`, `check_in(store, name, day)`: mutate the store in place. Raise `ValueError` on a bad name.\n  - `streak(store, name, today)`, `report(store, today)`: pure reads that return an `int` / `str`.\n- `cli.py`: argument dispatch in `main(argv, path, today, out)`. The module docstring doubles as the usage text.\n- `test_tracker.py`: `unittest` suite covering the core functions plus one CLI round trip.\n- `.gitignore`: ignores `__pycache__/`, `*.pyc`, `habits.json` (the default data file).\n\n## Build, run, test\n\nThere is nothing to build or install. Run from the repo root (imports are flat: `import tracker`).\n\n```sh\npython cli.py add run          # create habit \"run\"\npython cli.py done run         # check in today\npython cli.py report           # \"run: 1 day streak\"; also the default with no args\nHABITS_FILE=/tmp/h.json python cli.py report   # data file override (default ./habits.json)\n```\n\nPowerShell: `$env:HABITS_FILE='C:\\tmp\\h.json'; python cli.py report`.\n\nTests:\n\n```sh\npython -m unittest -v test_tracker            # all tests\npython -m unittest test_tracker.TrackerTests.test_streak   # one test\n```\n\nExit codes from `cli.main`: `0` ok, `1` user error (`ValueError`/`IndexError`), `2` unknown command (prints usage).\n\n## Extension points\n\n- **New CLI subcommand** (e.g. `undo NAME`, `list`): in `cli.py`, add an `elif cmd == \"...\":` branch inside the `try` in `main`.\n  Call a `tracker` function; do not touch the store inline.\n  Commands that change the store fall through to `tracker.save(path, store)`. Read-only commands `print(..., file=out)` and `return 0` early, as `report` does.\n  Update the usage line in the module docstring at `cli.py:1`.\n- **New store operation** (remove habit, un-check a day, rename): add a function to `tracker.py` modeled on `check_in`.\n  It takes `(store, name, ...)`, raises `ValueError(f\"no such habit: {name}\")` for unknown names, and mutates the store in place.\n  It returns nothing and does no I/O.\n- **New statistic** (longest streak, total check-ins, last N days): add a pure function modeled on `streak(store, name, today)`.\n  Always take `today` as a parameter and never call `date.today()` in `tracker.py`.\n  If it belongs in the report, extend the f-string in `report`, and update the `test_report` / `test_cli_roundtrip` expectations.\n- **Different storage format/location**: keep it inside `load`/`save` so the in-memory dict shape stays the same. `cli.DEFAULT_PATH` reads `HABITS_FILE`.\n- **Tests**: add `test_*` methods to `TrackerTests` in `test_tracker.py`.\n  Use the fixed dates `D = date(2026, 3, 10)` and `day(n)`, build stores as dict literals, and use `tempfile.TemporaryDirectory()` plus `io.StringIO()` for CLI tests (copy `test_cli_roundtrip`).\n\n## Conventions\n\n- Standard library only. Keep it free of third-party dependencies unless the private copy decides otherwise on purpose.\n- Flat modules at the repo root, no package. `snake_case` functions, short one-line module docstrings, almost no comments.\n- Store values are ISO date strings, sorted and with no duplicates (`check_in` keeps this invariant). Compare dates via `date.isoformat()`.\n- Logic in `tracker.py` is deterministic. \"Today\", the file path and the output stream are injected (`cli.main(argv, path, today, out)`) so tests never hit the real clock, the cwd or stdout.\n- Errors: core functions raise `ValueError` with a lowercase `\"<problem>: <name>\"` message. Only `cli.main` catches them and turns them into `error: ...` plus exit code `1`.\n- Output is plain text, one line per habit, sorted by name.\n\n## Gotchas\n\n- `streak`/`report` index `store[name]` directly. An unknown name raises `KeyError`, which `cli.main` does not catch. Validate first if you expose `streak` per habit.\n- `streak` counts from today when today is checked in, otherwise from yesterday. Missing only today does not break a streak (`test_streak`).\n- `cli.main` writes the file only after a successful mutating command. A failed command leaves the file untouched.\n- The `'missing habit name'` fallback in `cli.main` never fires: an exception object is always truthy, so a missing argument prints `error: list index out of range`. Fix with `str(e) if isinstance(e, ValueError) else 'missing habit name'` if that matters.\n- `DEFAULT_PATH` is read once at import time. Set `HABITS_FILE` before importing `cli`, or pass `path=` explicitly.\n\n## Hot zones\n\nThe upstream history has one commit (\"streaks 1.0\") touching every file, so expect any upstream change to land in these:\n\n- `tracker.py`, especially `streak` and `report`: the core. Add new functions next to them rather than rewriting them. If you change report wording, keep it in one f-string.\n- `cli.py` `main`: the dispatch chain. Add `elif` branches; do not restructure the `try`/save flow, or merges will conflict.\n- `test_tracker.py`: add new test methods (or a new `TestCase` class at the bottom) instead of editing existing assertions.\n- `.gitignore`: append local entries at the end.\n\n## Contributions from forks\ncontributions: pr\n<!-- pr, issue or none. xtend reads this line before a fork offers changes back. List what you would welcome below it. -->\nClearer error messages are welcome.\n",
+  "share": "xtend: upstream takes pull requests\nThe owner would welcome:\nClearer error messages are welcome.\nYour changes:\n  1. Give every habit an optional weekly goal: add a `goal NAME COUNT` com... (3 files, your agent will port it)\n  2. When a command names a habit that does not exist, make the error list... (2 files, your agent will port it)\nOffer some with: xtend share 1 2",
+  "offer": {
+    "files": [
+      {
+        "file": "test_tracker.py",
+        "status": "M",
+        "add": 18,
+        "del": 0
+      },
+      {
+        "file": "tracker.py",
+        "status": "M",
+        "add": 2,
+        "del": 1
+      }
+    ],
+    "body": "<!-- xtend offer -->\n\nChanges from a fork of this project, offered back in case you want any of them. Each one is a single commit on `main`. Merge them all, or take any one with the commands under it.\n\n### 1. When a command names a habit that does not exist, make the error list the habits that do.\n\nWhen a command names a habit that doesn't exist, the error now lists the existing habits in sorted order, for example `error: no such habit: walk (habits: read, run)`, or `(habits: none)` when there are none. The code change is one line in `tracker._habit` (already staged), and new `UnknownHabitTests` cover it at the bottom of `test_tracker.py`. I resolved the conflict by dropping the fork-only `GoalTests` class, since upstream has no goal feature; I haven't run the tests.\n\nFiles: `test_tracker.py`, `tracker.py`. Ported from fork commit `6e1bea47e6c5`.\n\n```sh\ngit fetch <fork> xtend/offer\ngit cherry-pick eb9572e1d918a1cbe061b0d482fd841b5762b1d5\n```\n\nA person picked these. xTend ported them onto your latest code with `claude` and ran `python -m unittest -q`. If you close this, xTend will not offer these changes again.",
+    "probe": {
+      "command": "python cli.py add read && python cli.py done raed",
+      "output": "error: no such habit: raed (habits: read)\r"
+    }
+  },
+  "steps": [
+    {
+      "who": "owner",
+      "title": "The owner writes a ref sheet once",
+      "command": "xtend sheet",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: wrote XTEND.md",
+      "seconds": 62.4,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You take your own copy",
+      "command": "xtend get ~\\streaks",
+      "output": "xtend: upstream ships XTEND.md, using it\nxtend: daily sync is off. Turn it on with: xtend daily on\nxtend: upstream takes pull requests\nxtend: ready in ./streaks. Try: cd streaks && xtend \"describe a change\"",
+      "seconds": 4.5,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You make it yours",
+      "command": "xtend \"Give every habit an optional weekly goal: add a `goal NAME COUNT` command that sets it, a `goal_met(store, name, today)` function that is true once this ISO week's check-ins reach the goal, and a `GOAL MET` marker beside such habits in the report.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 85.9,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What plain git does with it",
+      "command": "git merge upstream/main",
+      "output": "Auto-merging cli.py\nCONFLICT (content): Merge conflict in cli.py\nAuto-merging test_tracker.py\nAuto-merging tracker.py\nCONFLICT (content): Merge conflict in tracker.py\nAutomatic merge failed; fix conflicts and then commit the result.\nRecorded preimage for 'cli.py'\nRecorded preimage for 'tracker.py'",
+      "seconds": 0.4,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "And the check after it",
+      "command": "python -m unittest -q",
+      "output": "======================================================================\r\nERROR: test_tracker (unittest.loader._FailedTest.test_tracker)\r\n----------------------------------------------------------------------\r\nImportError: Failed to import test module: test_tracker\r\nTraceback (most recent call last):\r\n  File \"C:\\Program Files\\Python314\\Lib\\unittest\\loader.py\", line 433, in _find_test_path\r\n    module = self._get_module_from_name(name)\r\n  File \"C:\\Program Files\\Python314\\Lib\\unittest\\loader.py\", line 374, in _get_module_from_name\r\n    __import__(name)\r\n    ~~~~~~~~~~^^^^^^\r\n  File \"~\\you\\streaks\\test_tracker.py\", line 7, in <module>\r\n    import cli\r\n  File \"~\\you\\streaks\\cli.py\", line 1\r\n    <<<<<<< HEAD\r\n    ^^\r\nSyntaxError: invalid syntax\r\n----------------------------------------------------------------------\r\nRan 1 test in 0.000s\r\nFAILED (errors=1)\r",
+      "seconds": 0.8,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "xtend merges it for you",
+      "command": "xtend sync",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; agent resolved: cli.py, tracker.py",
+      "seconds": 95.2,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "The check, on the merged code",
+      "command": "python -m unittest -q",
+      "output": "----------------------------------------------------------------------\r\nRan 15 tests in 0.262s\r\nOK\r",
+      "seconds": 3,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "And again tomorrow",
+      "command": "xtend sync",
+      "output": "xtend: already up to date",
+      "seconds": 8.5,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Throw the merge away",
+      "command": "git switch -c again HEAD^1",
+      "output": "Switched to a new branch 'again'",
+      "seconds": 0.2,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Merge it again from scratch",
+      "command": "xtend sync",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; reused 2 resolutions git remembered: cli.py, tracker.py; agent fixed what the check reported",
+      "seconds": 162.4,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "A small fix the owner asked for",
+      "command": "xtend \"When a command names a habit that does not exist, make the error list the habits that do.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 46.7,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What upstream would take",
+      "command": "xtend share",
+      "output": "xtend: upstream takes pull requests\nThe owner would welcome:\nClearer error messages are welcome.\nYour changes:\n  1. Give every habit an optional weekly goal: add a `goal NAME COUNT` com... (3 files, your agent will port it)\n  2. When a command names a habit that does not exist, make the error list... (2 files, your agent will port it)\nOffer some with: xtend share 1 2",
+      "seconds": 5.7,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Offer only that fix",
+      "command": "xtend share 2 --yes",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: branch xtend/offer is ready, with a write-up in .git/xtend-offer.md. Upstream is not on GitHub, so send it the way its owner asks.",
+      "seconds": 67.6,
+      "status": 0
+    }
+  ]
+}

@@ -1,0 +1,240 @@
+{
+  "id": "php",
+  "name": "tally",
+  "lang": "PHP",
+  "about": "A small shopping cart and invoice library with a command-line invoice printer.",
+  "check": "php tests/run.php",
+  "change": "Give members 5% off the subtotal: add a memberDiscount() function that computes it, a --member flag on bin/cart, and a \"Member discount\" line on the printed invoice.",
+  "upstream": "Tally 2.0: integer cents, coupon codes and per-category tax",
+  "wanted": "Clearer error messages are welcome.",
+  "fix": "When bin/cart gets an unknown coupon code, make the error list the valid coupon codes.",
+  "web": false,
+  "generated": "2026-10-28T01:21:50.738Z",
+  "agent": "claude -p --allowedTools \"Edit,Write,Bash(git rm *),Bash(git mv *)\"",
+  "files": {
+    "yours": [
+      {
+        "file": "bin/cart",
+        "status": "M",
+        "add": 6,
+        "del": 2
+      },
+      {
+        "file": "src/Member.php",
+        "status": "A",
+        "add": 41,
+        "del": 0
+      },
+      {
+        "file": "tests/run.php",
+        "status": "M",
+        "add": 9,
+        "del": 0
+      }
+    ],
+    "theirs": [
+      {
+        "file": "bin/cart",
+        "status": "M",
+        "add": 17,
+        "del": 7
+      },
+      {
+        "file": "src/Cart.php",
+        "status": "M",
+        "add": 44,
+        "del": 20
+      },
+      {
+        "file": "src/Invoice.php",
+        "status": "M",
+        "add": 17,
+        "del": 8
+      },
+      {
+        "file": "tests/run.php",
+        "status": "M",
+        "add": 34,
+        "del": 16
+      }
+    ],
+    "conflicted": [
+      "bin/cart"
+    ]
+  },
+  "plain": {
+    "status": 1,
+    "checkPassed": false,
+    "check": "ok   subtotal in cents\nok   per-category tax\nok   total in cents\nok   food is untaxed\nok   percent coupon\nok   flat coupon capped at subtotal\nok   rejects bad coupon, category and price\nok   invoice shows discount\nok   invoice shows total\nFAIL cli applies coupon\nFatal error: Uncaught Error: Call to undefined method Tally\\Cart::subtotal() in ~\\you\\tally\\src\\Member.php:10\nStack trace:\n#0 ~\\you\\tally\\tests\\run.php(60): Tally\\memberDiscount(Object(Tally\\Cart))\n#1 {main}\n  thrown in ~\\you\\tally\\src\\Member.php on line 10\nPHP Fatal error:  Uncaught Error: Call to undefined method Tally\\Cart::subtotal() in ~\\you\\tally\\src\\Member.php:10\nStack trace:\n#0 ~\\you\\tally\\tests\\run.php(60): Tally\\memberDiscount(Object(Tally\\Cart))\n#1 {main}\n  thrown in ~\\you\\tally\\src\\Member.php on line 10"
+  },
+  "sync": {
+    "seconds": 83.5,
+    "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; agent resolved: bin/cart"
+  },
+  "replay": {
+    "seconds": 83.7,
+    "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; reused 1 resolution git remembered: bin/cart; agent fixed what the check reported",
+    "agent": true,
+    "sameTree": false
+  },
+  "kept": {
+    "yours": {
+      "memberDiscount function": true,
+      "--member flag": true,
+      "Member discount line": true
+    },
+    "upstream": {
+      "Coupon codes": true,
+      "Totals breakdown": true,
+      "Per-category tax": true
+    }
+  },
+  "screens": {
+    "upstream1": {
+      "command": "php bin/cart pen=1.50*4 book=12",
+      "output": "pen            4 x     $1.50 =      $6.00\nbook           1 x    $12.00 =     $12.00\n-----------------------------------------\nSubtotal                           $18.00\nTax                                 $1.44\nTotal                              $19.44"
+    },
+    "yours": {
+      "command": "php bin/cart --member pen=1.50*4 book=12",
+      "output": "pen            4 x     $1.50 =      $6.00\nbook           1 x    $12.00 =     $12.00\n-----------------------------------------\nSubtotal                           $18.00\nMember discount                    -$0.90\nTax                                 $1.37\nTotal                              $18.47"
+    },
+    "upstream2": {
+      "command": "php bin/cart --coupon SAVE10 pen=1.50*4 apple=0.40*10:food",
+      "output": "pen            4 x     $1.50 =      $6.00\napple         10 x     $0.40 =      $4.00\n-----------------------------------------\nSubtotal                           $10.00\nDiscount                           -$1.00\nTax                                 $0.43\nTotal                               $9.43"
+    },
+    "synced": {
+      "command": "php bin/cart --member --coupon SAVE10 pen=1.50*4 apple=0.40*10:food",
+      "output": "pen            4 x     $1.50 =      $6.00\napple         10 x     $0.40 =      $4.00\n-----------------------------------------\nSubtotal                           $10.00\nDiscount                           -$1.00\nMember discount                    -$0.45\nTax                                 $0.41\nTotal                               $8.96"
+    }
+  },
+  "log": "* xtend: When bin/cart gets an unknown coupon code, make the error list the valid coupon codes.\n*   xtend: sync upstream/main (c3cca69)\n|\\  \n| * Tally 2.0: integer cents, coupon codes and per-category tax\n* | xtend: Give members 5% off the subtotal: add a memberDiscount() function that computes it, a --member flag on bin/cart, and a \"Member discount\" line on the printed invoice.\n* | Run the check on every change\n* | xtend: set up\n|/  \n* Add XTEND.md\n* tally 1.0",
+  "sheet": "# Tally\n\n## What it is\nTally is a small, dependency-free PHP library and CLI for building a shopping cart\nand printing a plain-text invoice with subtotal, 8% tax and total. There is no\nComposer, no autoloader and no framework: files are wired together with `require`.\n\n## Map\n- `src/Cart.php` — `Tally\\Cart` (final): `add()`, `items()`, `subtotal()`, `tax()`, `total()`, `TAX_RATE` constant.\n- `src/Invoice.php` — namespaced functions `Tally\\formatMoney()` and `Tally\\formatInvoice(Cart)`; all output formatting.\n- `bin/cart` — CLI entry point; parses `sku=price*qty` args, prints the invoice, exits `2` on a bad arg.\n- `tests/run.php` — hand-rolled test runner (`check(name, bool)`), exits `1` on any failure.\n- `.gitignore` — ignores `vendor/`, `*.log`, `*.tmp`.\n\n## Build, run, test\nRequires PHP 8.0+ (`str_contains`, catch without a variable). No build step, nothing to install.\n```sh\nphp bin/cart pen=1.50*4 book=12*1   # print an invoice; qty defaults to 1 (book=12)\nphp tests/run.php                   # run all tests; prints ok/FAIL per check, exit 0 = pass\nphp -l src/Cart.php                 # syntax check a file\n```\n\n## Extension points\n- **New cart calculation** (discount, shipping, per-item tax): add a public method to\n  `src/Cart.php` next to `tax()`; return `float` wrapped in `round(..., 2)`. Make\n  `total()` include it if it affects the amount due.\n- **Configurable rates**: `TAX_RATE` is a `public const`. To vary it, add a constructor\n  parameter defaulting to `self::TAX_RATE` rather than editing the constant in place.\n- **New item field** (name, category): extend the array shape in `add()` and update both\n  `@var`/`@return` docblocks (`list<array{sku: string, price: float, qty: int}>`).\n  Give new parameters defaults so existing `add($sku, $price)` callers keep working.\n- **New invoice line or output format**: add a function in `src/Invoice.php` (copy\n  `formatInvoice`). Summary rows use `sprintf('%-30s %10s', $label, formatMoney(...))`;\n  item rows and the `str_repeat('-', 41)` rule are 41 chars wide — keep widths aligned.\n- **Currency formatting**: change only `formatMoney()`; every amount goes through it.\n- **New CLI flag or arg syntax**: edit the loop in `bin/cart`. Bad input → `fwrite(STDERR, ...)`\n  and `exit(2)`. Update the `// Usage:` comment at the top.\n- **New source file**: create `src/<Name>.php` with `namespace Tally;`, then add\n  `require __DIR__ . '/../src/<Name>.php';` to both `bin/cart` and `tests/run.php`.\n- **New test**: append to `tests/run.php` before the final `exit(...)`:\n  `check('short description', <bool expression>);`. Expect exceptions with the\n  `$threw = false; try { ... } catch (X) { $threw = true; }` pattern already there.\n  CLI tests go through `shell_exec('php ' . escapeshellarg(__DIR__ . '/../bin/cart') . ' ...')`.\n\n## Conventions\n- Every PHP file starts with `<?php` then `declare(strict_types=1);`; library code is in `namespace Tally;`.\n- Classes are `final`, PascalCase, one per file named after the class. Formatting helpers\n  are plain namespaced functions in camelCase (`formatMoney`), not static methods.\n- Full scalar type hints and return types on every function; array shapes documented\n  with Psalm/PHPStan-style docblocks.\n- Money is `float`, rounded to 2 decimals at every public return. Tests compare with `===`\n  against exact values (`18.0`, `1.44`), so keep rounding consistent.\n- Validate input at the boundary and throw `\\InvalidArgumentException` (leading backslash\n  inside the namespace) with the offending SKU in the message.\n- 4-space indent, opening brace of classes/functions on its own line, PSR-12 style.\n- Output strings end with `\"\\n\"`; lines are joined with `implode(\"\\n\", $lines)`.\n- No third-party dependencies. If you add Composer, `vendor/` is already ignored, but\n  then both entry points must switch from `require` to the autoloader.\n\n## Hot zones\nAll five files are touched by upstream; the repo is small, so every file is a merge risk.\n- `src/Cart.php` — core math. Add new methods instead of rewriting `subtotal()`/`tax()`/`total()`;\n  don't change the `add()` signature order or the `items()` array shape.\n- `src/Invoice.php` — layout widths and labels. Put custom formats in new functions and leave\n  `formatInvoice()` output unchanged, since tests match its text.\n- `bin/cart` — keep the arg regex and require list intact; add local behavior in a separate\n  block or a new `src/` file it requires.\n- `tests/run.php` — append local checks at the end (before `exit`), don't reorder existing ones;\n  later checks reuse the same `$cart`.\n- `.gitignore` — append local patterns at the bottom.\n\n## Contributions from forks\ncontributions: pr\n<!-- pr, issue or none. xtend reads this line before a fork offers changes back. List what you would welcome below it. -->\nClearer error messages are welcome.\n",
+  "share": "xtend: upstream takes pull requests\nThe owner would welcome:\nClearer error messages are welcome.\nYour changes:\n  1. Give members 5% off the subtotal: add a memberDiscount() function tha... (3 files, your agent will port it)\n  2. When bin/cart gets an unknown coupon code, make the error list the va... (2 files, your agent will port it)\nOffer some with: xtend share 1 2",
+  "offer": {
+    "files": [
+      {
+        "file": "src/Cart.php",
+        "status": "M",
+        "add": 1,
+        "del": 1
+      },
+      {
+        "file": "tests/run.php",
+        "status": "M",
+        "add": 3,
+        "del": 0
+      }
+    ],
+    "body": "<!-- xtend offer -->\n\nChanges from a fork of this project, offered back in case you want any of them. Each one is a single commit on `main`. Merge them all, or take any one with the commands under it.\n\n### 1. When bin/cart gets an unknown coupon code, make the error list the valid coupon codes.\n\nWhen `bin/cart` gets an unknown coupon code, the error now lists the valid codes (`Unknown coupon: NOPE (valid: SAVE10, FLAT5)`): the message in `Cart::applyCoupon()` builds the list from `Cart::COUPONS`. A new check at the end of `tests/run.php` covers this from the command line. I dropped the fork's member-discount tests from the conflict because they belong to a separate customization that upstream doesn't have. I haven't run the tests.\n\nFiles: `src/Cart.php`, `tests/run.php`. Ported from fork commit `0ff6ad8d38d4`.\n\n```sh\ngit fetch <fork> xtend/offer\ngit cherry-pick 9276f9defc2794f3b0570913547c78972249735f\n```\n\nA person picked these. xTend ported them onto your latest code with `claude` and ran `php tests/run.php`. If you close this, xTend will not offer these changes again.",
+    "probe": {
+      "command": "php bin/cart --coupon NOPE pen=1",
+      "output": "Unknown coupon: NOPE (valid: SAVE10, FLAT5)"
+    }
+  },
+  "steps": [
+    {
+      "who": "owner",
+      "title": "The owner writes a ref sheet once",
+      "command": "xtend sheet",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: wrote XTEND.md",
+      "seconds": 52.5,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You take your own copy",
+      "command": "xtend get ~\\tally",
+      "output": "xtend: upstream ships XTEND.md, using it\nxtend: daily sync is off. Turn it on with: xtend daily on\nxtend: upstream takes pull requests\nxtend: ready in ./tally. Try: cd tally && xtend \"describe a change\"",
+      "seconds": 7.5,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "You make it yours",
+      "command": "xtend \"Give members 5% off the subtotal: add a memberDiscount() function that computes it, a --member flag on bin/cart, and a \"Member discount\" line on the printed invoice.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 64.3,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What plain git does with it",
+      "command": "git merge upstream/main",
+      "output": "Auto-merging bin/cart\nCONFLICT (content): Merge conflict in bin/cart\nAuto-merging tests/run.php\nAutomatic merge failed; fix conflicts and then commit the result.\nRecorded preimage for 'bin/cart'",
+      "seconds": 0.6,
+      "status": 1
+    },
+    {
+      "who": "you",
+      "title": "And the check after it",
+      "command": "php tests/run.php",
+      "output": "ok   subtotal in cents\nok   per-category tax\nok   total in cents\nok   food is untaxed\nok   percent coupon\nok   flat coupon capped at subtotal\nok   rejects bad coupon, category and price\nok   invoice shows discount\nok   invoice shows total\nFAIL cli applies coupon\nFatal error: Uncaught Error: Call to undefined method Tally\\Cart::subtotal() in ~\\you\\tally\\src\\Member.php:10\nStack trace:\n#0 ~\\you\\tally\\tests\\run.php(60): Tally\\memberDiscount(Object(Tally\\Cart))\n#1 {main}\n  thrown in ~\\you\\tally\\src\\Member.php on line 10\nPHP Fatal error:  Uncaught Error: Call to undefined method Tally\\Cart::subtotal() in ~\\you\\tally\\src\\Member.php:10\nStack trace:\n#0 ~\\you\\tally\\tests\\run.php(60): Tally\\memberDiscount(Object(Tally\\Cart))\n#1 {main}\n  thrown in ~\\you\\tally\\src\\Member.php on line 10",
+      "seconds": 1.4,
+      "status": 255
+    },
+    {
+      "who": "you",
+      "title": "xtend merges it for you",
+      "command": "xtend sync",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; agent resolved: bin/cart",
+      "seconds": 83.5,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "The check, on the merged code",
+      "command": "php tests/run.php",
+      "output": "ok   subtotal in cents\nok   per-category tax\nok   total in cents\nok   food is untaxed\nok   percent coupon\nok   flat coupon capped at subtotal\nok   rejects bad coupon, category and price\nok   invoice shows discount\nok   invoice shows total\nok   cli applies coupon\nok   member discount\nok   member total\nok   member discount after coupon\nok   member invoice shows discount\nok   cli --member prints discount\nPHP Warning:  Undefined array key 3 in ~\\you\\tally\\bin\\cart on line 24",
+      "seconds": 4.6,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "And again tomorrow",
+      "command": "xtend sync",
+      "output": "xtend: already up to date",
+      "seconds": 2,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Throw the merge away",
+      "command": "git switch -c again HEAD^1",
+      "output": "Switched to a new branch 'again'",
+      "seconds": 0.3,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Merge it again from scratch",
+      "command": "xtend sync",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: merged upstream; reused 1 resolution git remembered: bin/cart; agent fixed what the check reported",
+      "seconds": 83.7,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "A small fix the owner asked for",
+      "command": "xtend \"When bin/cart gets an unknown coupon code, make the error list the valid coupon codes.\"",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: committed",
+      "seconds": 122.3,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "What upstream would take",
+      "command": "xtend share",
+      "output": "xtend: upstream takes pull requests\nThe owner would welcome:\nClearer error messages are welcome.\nYour changes:\n  1. Give members 5% off the subtotal: add a memberDiscount() function tha... (3 files, your agent will port it)\n  2. When bin/cart gets an unknown coupon code, make the error list the va... (2 files, your agent will port it)\nOffer some with: xtend share 1 2",
+      "seconds": 4.4,
+      "status": 0
+    },
+    {
+      "who": "you",
+      "title": "Offer only that fix",
+      "command": "xtend share 2 --yes",
+      "output": "xtend: asking agent (claude), try 1/3\nxtend: branch xtend/offer is ready, with a write-up in .git/xtend-offer.md. Upstream is not on GitHub, so send it the way its owner asks.",
+      "seconds": 74.3,
+      "status": 0
+    }
+  ]
+}
