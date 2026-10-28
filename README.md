@@ -111,7 +111,7 @@ XTEND_AGENT=amp xtend sync                   # or just for one run
 | `amp` | `amp -x` | `@sourcegraph/amp` | `AMP_API_KEY` |
 | `opencode` | `opencode run --auto -f {file} "..."` | `opencode-ai` | your provider's key, added by hand |
 
-Without `--agent`, `xtend get` picks the first of these that is installed. When daily sync is on, `xtend agent` rewrites `.github/workflows/xtend.yml` to match, so make any custom edits to it after you pick. The demo and every example ran on `claude`. The other presets are built from each CLI's `--help` and have not been run end to end.
+Without `--agent`, `xtend get` picks the first of these that is installed. When daily sync is on, `xtend agent` rewrites `.github/workflows/xtend.yml` to match, so make any custom edits to it after you pick. The demo and every example ran on `claude`. The Python example also ran end to end on `opencode -m <provider/model>`. `codex`, `gemini` and `amp` are built from each CLI's `--help` and have not been run end to end.
 
 ## Tune each step
 
