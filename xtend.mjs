@@ -75,12 +75,14 @@ const gh = (args, opts) => (process.env.XTEND_GH ? run(process.execPath, [proces
 const hasGh = () => !!process.env.XTEND_GH || has('gh')
 const has = (bin) => run(process.platform === 'win32' ? 'where' : 'which', [bin]).ok
 const log = (msg) => console.log(`xtend: ${msg}`)
+// Some agent CLIs, opencode among them, work in $PWD rather than the directory they start in, so PWD has to match it.
+const withPwd = () => ({ ...process.env, PWD: process.cwd() })
 
 function shell(cmd, input) {
   const file = cmd.includes('{file}') && path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xtend-')), 'prompt.md')
   if (file) fs.writeFileSync(file, input)
   try {
-    const r = spawnSync(file ? cmd.replaceAll('{file}', JSON.stringify(file)) : cmd, { shell: true, input: file ? '' : input, encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['pipe', 'pipe', 'inherit'] })
+    const r = spawnSync(file ? cmd.replaceAll('{file}', JSON.stringify(file)) : cmd, { shell: true, env: withPwd(), input: file ? '' : input, encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['pipe', 'pipe', 'inherit'] })
     return { ok: r.status === 0, out: (r.stdout || '').trim() }
   } finally {
     if (file) fs.rmSync(path.dirname(file), { recursive: true, force: true })
@@ -219,7 +221,7 @@ function agentUntil(cfg, step, vars, verify) {
 }
 
 function command(cmd) {
-  const r = spawnSync(cmd, { shell: true, encoding: 'utf8', maxBuffer: 64 << 20 })
+  const r = spawnSync(cmd, { shell: true, env: withPwd(), encoding: 'utf8', maxBuffer: 64 << 20 })
   return r.status === 0 ? null : `\`${cmd}\` failed:\n${`${r.stdout}\n${r.stderr}`.trim().slice(-4000)}`
 }
 const check = (cfg) => (cfg.check ? command(cfg.check) : null)

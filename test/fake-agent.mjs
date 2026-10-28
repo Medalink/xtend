@@ -4,6 +4,10 @@ import fs from 'node:fs'
 const at = process.argv.indexOf('--file')
 const prompt = fs.readFileSync(at > 0 ? process.argv[at + 1] : 0, 'utf8')
 const mode = process.env.FAKE_MODE
+if (process.env.PWD !== process.cwd()) {
+  console.error(`PWD ${process.env.PWD} is not the directory the agent runs in, ${process.cwd()}`)
+  process.exit(1)
+}
 if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, prompt.split('\n')[0] + '\n')
 if (process.env.FAKE_PROMPTS) fs.appendFileSync(process.env.FAKE_PROMPTS, `${prompt}\n=====\n`)
 if (mode === 'fail') process.exit(0)
