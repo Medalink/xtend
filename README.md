@@ -105,7 +105,7 @@ XTEND_AGENT=amp xtend sync                   # or just for one run
 
 | Preset | Command | Action installs | Secret |
 |---|---|---|---|
-| `claude` | `claude -p --allowedTools "Edit,Write,Bash(git rm *),Bash(git mv *)"` | `@anthropic-ai/claude-code` | `ANTHROPIC_API_KEY` |
+| `claude` | `claude -p --allowedTools "Edit,Write,Bash(git rm:*),Bash(git mv:*)"` | `@anthropic-ai/claude-code` | `ANTHROPIC_API_KEY` |
 | `codex` | `codex exec -s workspace-write -` | `@openai/codex` | `OPENAI_API_KEY` |
 | `gemini` | `gemini --approval-mode auto_edit` | `@google/gemini-cli` | `GEMINI_API_KEY` |
 | `amp` | `amp -x` | `@sourcegraph/amp` | `AMP_API_KEY` |

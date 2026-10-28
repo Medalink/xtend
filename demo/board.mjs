@@ -74,6 +74,9 @@ const screen = (a, state, label) => a.web
   ? `<a class="x-shot" href="${a.screens[state].href}"><span class="x-shot-head"><span class="sd-label">${label}</span><span class="sd-subtle">open</span></span><img src="img/${a.id}-${state}.png" alt="${esc(`${a.name}, ${label}`)}" width="1200" height="800" loading="lazy"></a>`
   : `<div class="x-shot"><span class="x-shot-head"><span class="sd-label">${label}</span><span class="sd-subtle">${esc(a.lang)}</span></span>${term(a.screens[state].command, a.screens[state].output, `${a.name}, ${label}`)}</div>`
 
+// Shortens a long command, closing a quote it cut open.
+const cut = (cmd) => { const s = cmd.slice(0, 57); return `${s}...${(s.match(/"/g) || []).length % 2 ? '"' : ''}` }
+
 const FEATURES = [
   ['Merges by intent', 'Every change is a commit that says what you asked for. The agent rebuilds that on upstream\'s new code.'],
   ['Your check decides', 'Nothing lands until your tests, and the tests upstream just shipped, pass.'],
@@ -111,7 +114,7 @@ function runLog(a) {
           <summary><span class="x-log-row">
             <span class="x-log-n sd-faint">${pad(n(s))}</span>
             <span><span class="sd-badge"${s.who === 'owner' ? ' data-tone="extra"' : ''}>${s.who}</span></span>
-            <span class="x-log-title">${esc(s.title)} <code class="sd-subtle">${esc(s.command.length > 60 ? s.command.slice(0, 57) + '..."' : s.command)}</code></span>
+            <span class="x-log-title">${esc(s.title)} <code class="sd-subtle">${esc(s.command.length > 60 ? cut(s.command) : s.command)}</code></span>
             <span class="sd-status" data-tone="${s.status === 0 ? 'success' : 'danger'}">${s.status === 0 ? 'ok' : `exit ${s.status}`}</span>
             <span class="x-log-dur"><span class="x-bar" data-kind="${kind(s)}"><i style="width:${Math.max(2, Math.round((s.seconds / longest) * 100))}%"></i></span><span class="sd-subtle x-log-t">${minutes(s.seconds)}</span></span>
           </span></summary>

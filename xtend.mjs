@@ -14,7 +14,7 @@ const TRIES = 3
 // Any command works as the agent: xtend pipes the prompt to its stdin, or writes it to a file and puts the path where {file} is.
 // These presets also tell the GitHub Action what to install and which key to pass. Pick one, add flags such as --model, or write your own.
 const AGENTS = {
-  claude: { cmd: 'claude -p --allowedTools "Edit,Write,Bash(git rm *),Bash(git mv *)"', install: '@anthropic-ai/claude-code', key: 'ANTHROPIC_API_KEY' },
+  claude: { cmd: 'claude -p --allowedTools "Edit,Write,Bash(git rm:*),Bash(git mv:*)"', install: '@anthropic-ai/claude-code', key: 'ANTHROPIC_API_KEY' },
   codex: { cmd: 'codex exec -s workspace-write -', install: '@openai/codex', key: 'OPENAI_API_KEY' },
   gemini: { cmd: 'gemini --approval-mode auto_edit', install: '@google/gemini-cli', key: 'GEMINI_API_KEY' },
   amp: { cmd: 'amp -x', install: '@sourcegraph/amp', key: 'AMP_API_KEY' },
@@ -115,8 +115,9 @@ function loadConfig(need = true) {
   const agents = Object.assign({}, ...layers.map((l) => l.data.agents))
   const pick = (key, name) => {
     for (const l of [...layers].reverse()) {
-      const v = (name && l.data.steps?.[name]?.[key]) ?? (key === 'prompt' ? undefined : l.data[key])
-      if (v !== undefined && v !== '') return { value: v, from: l.from, file: l.file }
+      const own = name && l.data.steps?.[name]?.[key]
+      const v = own ?? (key === 'prompt' ? undefined : l.data[key])
+      if (v !== undefined && v !== '') return { value: v, from: l.from, file: l.file, top: own == null }
     }
   }
   let detected
@@ -129,7 +130,7 @@ function loadConfig(need = true) {
     if (prompt) prompt.value = path.resolve(path.dirname(prompt.file), prompt.value)
     if (prompt && !fs.existsSync(prompt.value)) throw new Fail(`${prompt.file}: the ${name} prompt ${prompt.value} does not exist`)
     steps[name] = {
-      agent: { ...agent, value: agentCommand(String(agent.value), agents) },
+      agent: { ...agent, value: agent.from === CONFIG && agent.top ? String(agent.value) : agentCommand(String(agent.value), agents) },
       prompt: prompt || { value: 'built-in', from: 'xtend' },
       template: prompt ? fs.readFileSync(prompt.value, 'utf8') : PROMPTS[name],
       add: pick('add', name),
@@ -142,7 +143,7 @@ function loadConfig(need = true) {
 
 // The agent the daily Action runs: the repo's own sync agent, never this device's.
 function actionAgent(repo, agent = repo.agent) {
-  return agentCommand(String(repo.steps?.sync?.agent || agent), repo.agents)
+  return repo.steps?.sync?.agent ? agentCommand(String(repo.steps.sync.agent), repo.agents) : agent
 }
 
 function sheet() {
@@ -326,6 +327,7 @@ function get(args) {
   const at = args.indexOf('--agent')
   const agent = at >= 0 ? agentCommand(args.splice(at, 2)[1] || '') : defaultAgent()
   const src = args[0]
+  if (args.length > 1) throw new Fail(`${args.slice(1).join(' ')} is not read. Quote the agent with its flags, like --agent "codex -m gpt-6"`)
   if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily]')
   const slug = githubSlug(src)
   const name = path.basename(slug || src).replace(/\.git$/, '')
@@ -602,7 +604,7 @@ function port(cfg, picked, theirs, signoff) {
       if (reused.length) log(`reused ${reused.length} resolution${reused.length === 1 ? '' : 's'} git remembered for "${c.subject}": ${reused.join(', ')}`)
       const verify = () => {
         if (git('rev-parse', 'HEAD') !== base) git('reset', '-q', '--soft', base)
-        git('add', '-A')
+        git('add', '-A', '--', ...MINE)
         return markersLeft(conflicted) || check(cfg)
       }
       let problem = applied.ok || (conflicted && !open) ? verify() : conflicted ? `conflicts in:\n${open}` : `the diff did not apply:\n${applied.err}`
@@ -641,7 +643,7 @@ function offerBody(cfg, policy, via, ported, forkSlug) {
   return [
     OFFER_MARK,
     via === 'pr' && policy.template.trim(),
-    `Changes from a fork of this project, offered back in case you want any of them. Each one is a single commit on \`${cfg.branch}\`. ${via === 'pr' ? 'Merge them all, or take' : 'Take'} any one with the commands under it.`,
+    `Changes from a fork of this project, offered back in case you want any of them. Each one is a single commit on top of your \`${cfg.branch}\`. ${via === 'pr' ? 'Merge them all, or take' : 'Take'} any one with the commands under it.`,
     ...items,
     `A person picked these. xTend ported them onto your latest code with \`${cfg.steps.port.agent.value.split(' ')[0]}\`${cfg.check ? ` and ran \`${cfg.check}\`` : ''}. If you close this, xTend will not offer these changes again.`,
   ].filter(Boolean).join('\n\n')

@@ -148,6 +148,13 @@ assert.equal(shown.steps.sync.after, undefined, 'a step setting stays in its ste
 assert.equal(shown.steps.sync.add.from, 'this device', 'a top-level setting reaches every step')
 assert.equal(JSON.parse(xtend(fork, ['config', '--json']).stdout).steps.change.agent.from, 'XTEND_AGENT', 'XTEND_AGENT beats every file')
 assert.match(xtend(fork, ['config'], savedAgent).stdout, /mine|not seen by the daily Action/)
+const oldClaude = 'claude -p --allowedTools "Edit,Write,Bash(git rm *),Bash(git mv *)"'
+const cfgText = fs.readFileSync(cfgPath, 'utf8')
+fs.writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(cfgText), agent: oldClaude }))
+fs.writeFileSync(deviceCfg, '{}')
+assert.equal(JSON.parse(xtend(fork, ['config', '--json'], savedAgent).stdout).steps.sync.agent.value, oldClaude, 'the agent saved in the repo runs as written')
+fs.writeFileSync(cfgPath, cfgText)
+fs.writeFileSync(deviceCfg, JSON.stringify({ agents: { mine: fake }, agent: 'mine', add: 'Use tabs.', steps: { change: { after: `node "${fmt}"` } } }))
 
 r = xtend(fork, ['say', 'howdy', 'again'], { ...savedAgent, FAKE_MODE: 'append', FAKE_PROMPTS: prompts })
 assert.equal(r.status, 0, r.stderr + r.stdout)
