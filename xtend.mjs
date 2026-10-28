@@ -332,6 +332,7 @@ function get(args) {
   const slug = githubSlug(src)
   const name = path.basename(slug || src).replace(/\.git$/, '')
   if (fs.existsSync(name)) throw new Fail(`${name} already exists`)
+  if (daily && !(slug && hasGh())) throw new Fail('--daily needs a GitHub fork, so a GitHub repo and the gh CLI. Drop --daily, or install gh.')
 
   if (slug && hasGh()) {
     log(`forking ${slug} on GitHub`)
@@ -760,7 +761,9 @@ function setDaily(cfg, [want]) {
   else git('commit', '-q', '-m', `xtend: daily sync ${want}`)
   pushIfFork()
   const repo = origin && githubSlug(origin)
-  if (want === 'on' && repo && hasGh()) gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true'])
+  if (want === 'on' && repo && hasGh() && !gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true']).ok) log(`could not turn on Actions; turn them on at https://github.com/${repo}/actions`)
+  const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
+  if (want === 'on' && cfg.branch && branch !== cfg.branch) log(`GitHub runs scheduled Actions only from the default branch, and this is ${branch}. Merge it into ${cfg.branch}.`)
   log(want === 'on' ? `daily sync is on. ${repo ? actionNote(actionAgent(cfg.repo), repo, cfg.repo.agents) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
 }
 
