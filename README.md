@@ -170,6 +170,12 @@ xtend get owner/repo --private --name mine
 
 xTend clones the repo, creates the private repo `mine` on your account with `gh repo create`, and pushes to it. Upstream stays a remote, so `xtend sync` and daily sync work the same. A private copy is not a GitHub fork, so `xtend share` cannot open a pull request from it; offer those changes as an issue, or from a public fork.
 
+If the repo already exists and is empty, say one you made by hand or on a host that is not GitHub, point at it. This needs no `gh`:
+
+```sh
+xtend get owner/repo --name mine --origin https://github.com/you/mine.git
+```
+
 `--name` also works without `--private`, to name a public fork.
 
 ## Daily sync

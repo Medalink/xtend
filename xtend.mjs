@@ -36,6 +36,7 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
       [--agent <preset or command>]     claude, codex, gemini, amp, opencode, or your own command
       [--daily]                         also turn on the daily sync Action
       [--private]                       keep it in a new private repo of yours instead of a public fork
+      [--origin <url>]                  or keep it in an empty repo you already made
       [--name <name>]                   call your copy something else, e.g. --name mcode
   xtend "<what you want>"               your agent makes the change and commits it
   xtend sync                            merge upstream; your agent resolves conflicts
@@ -331,18 +332,22 @@ function get(args) {
   const agent = at >= 0 ? agentCommand(args.splice(at, 2)[1] || '') : defaultAgent()
   const nameAt = args.indexOf('--name')
   const named = nameAt >= 0 ? args.splice(nameAt, 2)[1] || '' : null
+  const originAt = args.indexOf('--origin')
+  const origin = originAt >= 0 ? args.splice(originAt, 2)[1] || '' : null
   const src = args[0]
   if (args.length > 1) throw new Fail(`${args.slice(1).join(' ')} is not read. Quote the agent with its flags, like --agent "codex -m gpt-6"`)
-  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily] [--private] [--name <name>]')
+  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily] [--private | --origin <url>] [--name <name>]')
   if (named !== null && !/^[\w.-]+$/.test(named)) throw new Fail('--name takes one name of letters, digits, dots, dashes and underscores, like --name mcode')
+  if (origin !== null && (!origin || origin.startsWith('--'))) throw new Fail('--origin takes the URL of an empty repo of yours, like --origin https://github.com/you/mcode.git')
+  if (origin && priv) throw new Fail('--private creates the repo and --origin uses one you made. Pick one.')
   const slug = githubSlug(src)
   const name = named || path.basename(slug || src).replace(/\.git$/, '')
   if (fs.existsSync(name)) throw new Fail(`${name} already exists`)
   // GitHub gives a fork its parent's visibility, so a fork of a public repo is public. A private copy is a repo of its own that tracks upstream by remote.
   if (priv && !hasGh()) throw new Fail('--private creates a private GitHub repo, which needs the gh CLI. Install gh, or drop --private and add your own origin.')
-  if (daily && !((slug || priv) && hasGh())) throw new Fail('--daily needs a GitHub fork, so a GitHub repo and the gh CLI. Drop --daily, or install gh.')
+  if (daily && !((slug || priv || origin) && hasGh())) throw new Fail('--daily needs a GitHub fork, so a GitHub repo and the gh CLI. Drop --daily, or install gh.')
 
-  if (slug && hasGh() && !priv) {
+  if (slug && hasGh() && !priv && !origin) {
     log(`forking ${slug} on GitHub`)
     const r = gh(['repo', 'fork', slug, '--clone', '--default-branch-only', ...(named ? ['--fork-name', name] : [])], { stdio: ['ignore', 'inherit', 'inherit'] })
     if (!r.ok) throw new Fail('gh repo fork failed')
@@ -362,9 +367,9 @@ function get(args) {
       fs.rmSync(name, { recursive: true, force: true })
       throw new Fail(`gh repo create failed, so ./${name} was removed. Check \`gh auth status\` and that you have no repo called ${name} yet, then run it again.`)
     }
-    // The clone tracked upstream, so a plain \`git push\` would have gone to the owner's repo.
-    git('config', `branch.${git('rev-parse', '--abbrev-ref', 'HEAD')}.remote`, 'origin')
-  }
+  } else if (origin) git('remote', 'add', 'origin', origin)
+  // The clone tracked upstream, so a plain \`git push\` would have gone to the owner's repo.
+  if (priv || origin) git('config', `branch.${git('rev-parse', '--abbrev-ref', 'HEAD')}.remote`, 'origin')
   const setup = { upstream: git('remote', 'get-url', 'upstream'), branch, agent, check: '' }
 
   fs.mkdirSync(DIR, { recursive: true })

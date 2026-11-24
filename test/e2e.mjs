@@ -379,5 +379,20 @@ r = xtend(copy, ['daily', 'on'], priv)
 assert.equal(r.status, 0, r.stderr + r.stdout)
 assert.match(git(mineOrigin, 'show', 'main:.github/workflows/xtend.yml'), /cron/, 'daily sync works from a private copy')
 
+// The same, into an empty repo you made yourself. gh is installed here, and still nothing is forked or created.
+const handOrigin = path.join(root, 'hand.git')
+git(root, 'init', '-q', '--bare', handOrigin)
+r = xtend(work, ['get', up, '--private', '--origin', handOrigin], priv)
+assert.match(r.stderr, /Pick one/, '--private and --origin are two ways to do one thing')
+const before = ghCalls('create').length + ghCalls('fork').length
+r = xtend(work, ['get', up, '--name', 'hand', '--origin', handOrigin], priv)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+const hand = path.join(work, 'hand')
+assert.equal(ghCalls('create').length + ghCalls('fork').length, before, '--origin asks GitHub for nothing')
+assert.equal(git(hand, 'remote', 'get-url', 'origin'), handOrigin)
+assert.equal(git(hand, 'remote', 'get-url', 'upstream'), up)
+assert.equal(git(hand, 'config', 'branch.main.remote'), 'origin')
+assert.equal(git(handOrigin, 'rev-parse', 'main'), git(hand, 'rev-parse', 'HEAD'), 'the set-up copy is pushed to the repo you made')
+
 fs.rmSync(root, { recursive: true, force: true })
 console.log('e2e ok')
