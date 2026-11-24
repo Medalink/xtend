@@ -41,6 +41,9 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
       [--replace]                       with --origin: the repo has a starter commit (README, license); replace it
       [--name <name>]                   call your copy something else, e.g. --name mcode
   xtend "<what you want>"               your agent makes the change and commits it
+  xtend commit "<what you wanted>"      record a change an agent already made itself: run the check, commit, push
+      [-m "<what changed and why>"]     the body later merges read to keep the change working
+      [-- <path>...]                    only these files; without it, everything changed
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sync --prompt                   merge upstream; print what is left for an agent that resolves it itself
   xtend sync --continue | --abort       finish or drop a sync that --prompt left open
@@ -494,6 +497,31 @@ function change(cfg, request) {
     return
   }
   git('commit', '-q', '-m', `xtend: ${request}`, '-m', r.summary || request)
+  log('committed')
+  pushIfFork()
+}
+
+// For an agent that made the change itself. It passes the same check and gets the same commit as a change xtend asked an agent for,
+// with hooks off like every git xtend starts, so a repo's pre-commit tasks cannot stand in for or block the check.
+function commitChange(cfg, args) {
+  const cut = args.indexOf('--')
+  const paths = cut >= 0 ? args.splice(cut).slice(1) : []
+  const at = args.indexOf('-m')
+  const why = at >= 0 ? args.splice(at, 2)[1] || '' : ''
+  const request = args.join(' ').trim()
+  if (!request) throw new Fail('usage: xtend commit "<what the user asked for>" [-m "<what you changed and why>"] [-- <path>...]')
+  if (fs.existsSync(syncState())) throw new Fail('a sync is waiting to be finished. Run `xtend sync --continue`, or `xtend sync --abort` to drop it.')
+  if (paths.length) git('add', '--', ...paths)
+  else git('add', '-A')
+  if (!git('diff', '--cached', '--name-only')) throw new Fail('nothing to commit')
+  const problem = check(cfg)
+  if (problem) {
+    console.log(problem)
+    log('not committed: the check failed. Your edits are staged. Fix them and run it again.')
+    process.exitCode = 2
+    return
+  }
+  git('commit', '-q', '-m', `xtend: ${request}`, '-m', why || request)
   log('committed')
   pushIfFork()
 }
@@ -975,6 +1003,7 @@ try {
   else if (verb === 'get') get(rest)
   else if (verb === 'agent') setAgent(loadConfig(), rest)
   else if (verb === 'daily') setDaily(loadConfig(), rest)
+  else if (verb === 'commit') commitChange(loadConfig(), rest)
   else if (verb === 'sync') sync(loadConfig(), rest)
   else if (verb === 'share') share(loadConfig(), rest)
   else if (verb === 'sheet') writeSheet(loadConfig(false), rest)
