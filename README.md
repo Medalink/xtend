@@ -147,7 +147,7 @@ Agents drive xTend through its CLI, so there is no MCP server to run. `xtend sha
 
 It uses tools you already have. Nothing runs as a service.
 
-- **GitHub** holds your fork. `gh repo fork` creates it. If you turn it on, a GitHub Action in it runs `xtend sync` every day.
+- **GitHub** holds your fork. `gh repo fork` creates it. If you turn it on, a GitHub Action in it runs `xtend sync` every day. With `--private`, `gh repo create` makes a private repo of your own instead.
 - **git** does the merging. Commit messages hold the intent of each customization, and `rerere` replays any conflict git has resolved before.
 - **Your agent CLI** handles what git can't. That's Claude Code, Codex, Gemini, Amp, opencode, or any command you set. It sees the ref sheet, what you changed and why, and what upstream changed.
 - **Your check** gates every change and merge. Set `"check": "npm test"` in `.xtend/config.json`. Each step can also run a formatter or other command of yours; see [Tune each step](#tune-each-step).
@@ -159,6 +159,18 @@ It uses tools you already have. Nothing runs as a service.
 - A sync is accepted only if the merge is still in progress, no conflict markers are left, and your check passes. xTend makes up to three tries, or your `tries`, and feeds each failure back to the agent.
 - Otherwise xTend resets to exactly where you were and exits non-zero, so the Action fails and GitHub emails you. A failed push also exits non-zero, and the next sync pushes again.
 - xTend refuses to start with uncommitted or untracked files, so a rollback can never take your work with it. Gitignored files such as `.env` are outside that rollback, which is why the default Claude command can't delete files.
+
+## A private copy
+
+GitHub gives a fork the visibility of the repo it came from, so a fork of a public repo is public. To keep your version to yourself, ask for a private copy, and name it what you like:
+
+```sh
+xtend get owner/repo --private --name mine
+```
+
+xTend clones the repo, creates the private repo `mine` on your account with `gh repo create`, and pushes to it. Upstream stays a remote, so `xtend sync` and daily sync work the same. A private copy is not a GitHub fork, so `xtend share` cannot open a pull request from it; offer those changes as an issue, or from a public fork.
+
+`--name` also works without `--private`, to name a public fork.
 
 ## Daily sync
 

@@ -35,6 +35,8 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
   xtend get <owner/repo | url | path>   fork, clone and write the ref sheet
       [--agent <preset or command>]     claude, codex, gemini, amp, opencode, or your own command
       [--daily]                         also turn on the daily sync Action
+      [--private]                       keep it in a new private repo of yours instead of a public fork
+      [--name <name>]                   call your copy something else, e.g. --name mcode
   xtend "<what you want>"               your agent makes the change and commits it
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sheet                           (re)write the ref sheet agents read before editing
@@ -323,20 +325,26 @@ function githubSlug(src) {
 
 function get(args) {
   const daily = args.includes('--daily')
-  args = args.filter((a) => a !== '--daily')
+  const priv = args.includes('--private')
+  args = args.filter((a) => a !== '--daily' && a !== '--private')
   const at = args.indexOf('--agent')
   const agent = at >= 0 ? agentCommand(args.splice(at, 2)[1] || '') : defaultAgent()
+  const nameAt = args.indexOf('--name')
+  const named = nameAt >= 0 ? args.splice(nameAt, 2)[1] || '' : null
   const src = args[0]
   if (args.length > 1) throw new Fail(`${args.slice(1).join(' ')} is not read. Quote the agent with its flags, like --agent "codex -m gpt-6"`)
-  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily]')
+  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily] [--private] [--name <name>]')
+  if (named !== null && !/^[\w.-]+$/.test(named)) throw new Fail('--name takes one name of letters, digits, dots, dashes and underscores, like --name mcode')
   const slug = githubSlug(src)
-  const name = path.basename(slug || src).replace(/\.git$/, '')
+  const name = named || path.basename(slug || src).replace(/\.git$/, '')
   if (fs.existsSync(name)) throw new Fail(`${name} already exists`)
-  if (daily && !(slug && hasGh())) throw new Fail('--daily needs a GitHub fork, so a GitHub repo and the gh CLI. Drop --daily, or install gh.')
+  // GitHub gives a fork its parent's visibility, so a fork of a public repo is public. A private copy is a repo of its own that tracks upstream by remote.
+  if (priv && !hasGh()) throw new Fail('--private creates a private GitHub repo, which needs the gh CLI. Install gh, or drop --private and add your own origin.')
+  if (daily && !((slug || priv) && hasGh())) throw new Fail('--daily needs a GitHub fork, so a GitHub repo and the gh CLI. Drop --daily, or install gh.')
 
-  if (slug && hasGh()) {
+  if (slug && hasGh() && !priv) {
     log(`forking ${slug} on GitHub`)
-    const r = gh(['repo', 'fork', slug, '--clone', '--default-branch-only'], { stdio: ['ignore', 'inherit', 'inherit'] })
+    const r = gh(['repo', 'fork', slug, '--clone', '--default-branch-only', ...(named ? ['--fork-name', name] : [])], { stdio: ['ignore', 'inherit', 'inherit'] })
     if (!r.ok) throw new Fail('gh repo fork failed')
   } else {
     git('clone', slug ? `https://github.com/${slug}.git` : src, name)
@@ -346,6 +354,17 @@ function get(args) {
 
   tryGit('remote', 'set-head', 'upstream', '--auto')
   const branch = git('rev-parse', '--abbrev-ref', 'upstream/HEAD').replace(/^upstream\//, '')
+  if (priv) {
+    log(`creating private repo ${name} on GitHub`)
+    const r = gh(['repo', 'create', name, '--private', '--source', '.', '--remote', 'origin'], { stdio: ['ignore', 'inherit', 'inherit'] })
+    if (!r.ok || !tryGit('remote', 'get-url', 'origin')) {
+      process.chdir('..')
+      fs.rmSync(name, { recursive: true, force: true })
+      throw new Fail(`gh repo create failed, so ./${name} was removed. Check \`gh auth status\` and that you have no repo called ${name} yet, then run it again.`)
+    }
+    // The clone tracked upstream, so a plain \`git push\` would have gone to the owner's repo.
+    git('config', `branch.${git('rev-parse', '--abbrev-ref', 'HEAD')}.remote`, 'origin')
+  }
   const setup = { upstream: git('remote', 'get-url', 'upstream'), branch, agent, check: '' }
 
   fs.mkdirSync(DIR, { recursive: true })
