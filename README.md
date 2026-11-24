@@ -187,6 +187,7 @@ A repo of your own inherits every workflow upstream ships, and on GitHub its CI,
 An agent working inside a session often cannot start a second agent CLI. It can still do every step itself:
 
 ```sh
+xtend commit "add a dark mode toggle" -m "what changed and why"   # after editing: run the check, commit, push
 xtend sheet --prompt     # print the ref sheet instructions; write the sheet, commit it as "xtend: write ref sheet"
 xtend sync --prompt      # merge upstream; if something is left, print it and leave the merge open
 xtend sync --continue    # check the resolution, commit the merge and push

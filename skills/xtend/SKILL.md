@@ -20,7 +20,9 @@ description: Keep a customized fork of an open-source project with upstream merg
 
 ## Making a change yourself
 
-You are the agent, so edit the code directly instead of running `xtend "<request>"`. Commit each change on its own, with a message that says what the user asked for and why: `git commit -m "xtend: <request>" -m "<what you changed and why>"`. Later merges rely on that message to keep the change working. Read `XTEND.md` or `.xtend/sheet.md` first. Prefer new files and small edits to files that upstream changes often.
+You are the agent, so edit the code directly instead of running `xtend "<request>"`. Read `XTEND.md` or `.xtend/sheet.md` first. Prefer new files and small edits to files that upstream changes often.
+
+Record each change on its own with `xtend commit "<what the user asked for>" -m "<what you changed and why>"`. Add `-- <path>...` when the working tree holds more than one change. It runs the project's check, commits as `xtend: <request>` and pushes. If the check fails it exits 2 and commits nothing: fix the problem and run it again. Do not run `git commit` yourself. Later merges rely on that message to keep the change working, and the check is what keeps a bad change out.
 
 ## Writing the ref sheet yourself
 
