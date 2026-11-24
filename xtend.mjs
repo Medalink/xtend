@@ -41,8 +41,12 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
       [--replace]                       with --origin: the repo has a starter commit (README, license); replace it
       [--name <name>]                   call your copy something else, e.g. --name mcode
   xtend "<what you want>"               your agent makes the change and commits it
+  xtend fix "<what is broken>"          like a change, but temporary: a stopgap for something upstream will fix
+      [--proof "<command>"]             passes once the stopgap is not needed; lets sync drop it for you
+  xtend temp [--try]                    list the temporary fixes you still carry; --try drops the ones no longer needed
   xtend commit "<what you wanted>"      record a change an agent already made itself: run the check, commit, push
       [-m "<what changed and why>"]     the body later merges read to keep the change working
+      [--temp] [--proof "<command>"]    record it as a temporary fix, as xtend fix does
       [-- <path>...]                    only these files; without it, everything changed
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sync --prompt                   merge upstream; print what is left for an agent that resolves it itself
@@ -305,6 +309,7 @@ ${SUMMARY}`,
 # Task
 You are merging new upstream changes into a customized copy of this project. A git merge is in progress.
 Keep every upstream change AND keep every local customization working. When they collide, re-apply the local intent on top of the new upstream code.
+A customization whose message has an Xtend-Temporary line is a stopgap for something that was broken upstream. Where the incoming changes fix the same thing, take upstream's code and leave the stopgap out.
 
 ## Local customizations (their intent, newest first)
 {{ours}}
@@ -481,7 +486,7 @@ function writeSheet(cfg, args = []) {
 
 // --- change ------------------------------------------------------------
 
-function change(cfg, request) {
+function change(cfg, request, trailers = '') {
   requireClean()
   const before = git('rev-parse', 'HEAD')
   const vars = { sheet: sheet(), request }
@@ -496,9 +501,101 @@ function change(cfg, request) {
     process.exitCode = 1
     return
   }
-  git('commit', '-q', '-m', `xtend: ${request}`, '-m', r.summary || request)
-  log('committed')
+  git('commit', '-q', '-m', `xtend: ${request}`, '-m', withTrailers(r.summary || request, trailers))
+  log(trailers ? 'committed as a temporary fix' : 'committed')
   pushIfFork()
+}
+
+function fix(cfg, args) {
+  const proofAt = args.indexOf('--proof')
+  const proof = proofAt >= 0 ? args.splice(proofAt, 2)[1] || '' : ''
+  const request = args.join(' ').trim()
+  if (!request || (proofAt >= 0 && !proof)) throw new Fail('usage: xtend fix "<what is broken>" [--proof "<command that passes once the fix is not needed>"]')
+  change(cfg, request, tempTrailers(true, proof))
+}
+
+// --- temporary fixes ---------------------------------------------------
+
+// A temporary fix is a change you expect to throw away: a stopgap for something upstream will fix. It is an ordinary commit with an
+// Xtend-Temporary trailer. A commit with Xtend-Retires: <sha> ends it, so history is never rewritten.
+const TEMP = 'Xtend-Temporary'
+const PROOF = 'Xtend-Proof'
+const RETIRES = 'Xtend-Retires'
+
+function tempTrailers(temp, proof) {
+  if (proof && /\n/.test(proof)) throw new Fail('--proof takes one command on one line')
+  return temp || proof ? [`${TEMP}: yes`, proof && `${PROOF}: ${proof}`].filter(Boolean).join('\n') : ''
+}
+
+// Keeps trailers the caller already put at the end of the body in the same block as xtend's, so git reads them all.
+function withTrailers(body, trailers) {
+  if (!trailers) return body
+  const last = body.split(/\n\n/).pop()
+  const isBlock = body.includes('\n\n') && last.split('\n').every((l) => /^[\w-]+: /.test(l))
+  return `${body}${isBlock ? '\n' : '\n\n'}${trailers}`
+}
+
+function tempFixes(cfg) {
+  const theirs = `upstream/${cfg.branch}`
+  const trailer = (key) => `%(trailers:key=${key},valueonly,separator=%x20)`
+  const rows = git('log', '--no-merges', '--reverse', `--format=%H%x1f%s%x1f${trailer(TEMP)}%x1f${trailer(PROOF)}%x1f${trailer(RETIRES)}%x1e`, `${theirs}..HEAD`)
+    .split('\x1e').map((r) => r.trim()).filter(Boolean).map((r) => r.split('\x1f').map((c) => c.trim()))
+  const retired = new Set(rows.flatMap((r) => (r[4] || '').split(/\s+/).filter(Boolean)))
+  const live = rows.filter(([sha, , temp]) => temp && !retired.has(sha)).map(([sha, subject, , proof]) => ({
+    sha,
+    subject: subject.replace(/^xtend: /, ''),
+    proof,
+    files: git('show', '--name-only', '--format=', sha).split('\n').filter(Boolean),
+  }))
+  // A retired fix and the commit that retired it cancel out, so neither counts as a local change any more.
+  live.settled = new Set([...retired, ...rows.filter((r) => r[4]).map((r) => r[0])])
+  return live
+}
+
+const sameAsUpstream = (cfg, files) => run('git', ['diff', '--quiet', `upstream/${cfg.branch}`, 'HEAD', '--', ...files]).ok
+
+// Ends the fixes that are no longer needed. One whose files now match upstream is over. One with a proof is reverted, and stays reverted
+// only if its proof and the check pass without it. Without a proof xtend cannot tell, so the fix stays until its files match upstream.
+function retireTemps(cfg, fixes) {
+  for (const fix of fixes) {
+    const end = (subject, body) => git('commit', '-q', '--allow-empty', '-m', `xtend: ${subject}: ${fix.subject}`, '-m', `${body}\n\n${RETIRES}: ${fix.sha}`)
+    if (sameAsUpstream(cfg, fix.files)) {
+      end('retire temporary fix', "Upstream's code is in place where this fix was.")
+      log(`retired temporary fix "${fix.subject}": upstream's code is in its place`)
+      continue
+    }
+    if (!fix.proof) continue
+    const head = git('rev-parse', 'HEAD')
+    const undo = () => {
+      run('git', ['revert', '--quit'])
+      git('reset', '-q', '--hard', head)
+      git('clean', '-qfd')
+    }
+    if (!run('git', ['revert', '--no-commit', fix.sha]).ok || !git('diff', '--cached', '--name-only') || command(fix.proof) || check(cfg)) {
+      undo()
+      continue
+    }
+    run('git', ['revert', '--quit'])
+    end('drop temporary fix', `Its proof passes without it now: ${fix.proof}`)
+    log(`dropped temporary fix "${fix.subject}": its proof passes without it`)
+  }
+}
+
+function temp(cfg, args) {
+  if (args.length && args.join() !== '--try') throw new Fail('usage: xtend temp [--try]')
+  if (!tryGit('rev-parse', '--verify', '-q', `upstream/${cfg.branch}`)) throw new Fail('upstream has not been fetched yet. Run `xtend sync` first.')
+  if (args.length) {
+    requireClean()
+    retireTemps(cfg, tempFixes(cfg))
+    pushIfFork()
+  }
+  const fixes = tempFixes(cfg)
+  if (!fixes.length) return console.log('no temporary fixes')
+  for (const fix of fixes) {
+    console.log(`${fix.sha.slice(0, 10)}  ${fix.subject}`)
+    console.log(`            ${sameAsUpstream(cfg, fix.files) ? "upstream's code is in its place; the next sync or `xtend temp --try` retires it" : `still differs from upstream in: ${fix.files.join(', ')}`}`)
+    console.log(`            ${fix.proof ? `proof: ${fix.proof}` : 'no proof, so it stays until its files match upstream'}`)
+  }
 }
 
 // For an agent that made the change itself. It passes the same check and gets the same commit as a change xtend asked an agent for,
@@ -508,30 +605,38 @@ function commitChange(cfg, args) {
   const paths = cut >= 0 ? args.splice(cut).slice(1) : []
   const at = args.indexOf('-m')
   const why = at >= 0 ? args.splice(at, 2)[1] || '' : ''
+  const proofAt = args.indexOf('--proof')
+  const proof = proofAt >= 0 ? args.splice(proofAt, 2)[1] || '' : ''
+  const isTemp = args.includes('--temp')
+  args = args.filter((a) => a !== '--temp')
+  const trailers = tempTrailers(isTemp, proof)
   const request = args.join(' ').trim()
-  if (!request) throw new Fail('usage: xtend commit "<what the user asked for>" [-m "<what you changed and why>"] [-- <path>...]')
+  if (!request || (proofAt >= 0 && !proof)) throw new Fail('usage: xtend commit "<what the user asked for>" [-m "<what you changed and why>"] [--temp] [--proof "<command>"] [-- <path>...]')
   if (fs.existsSync(syncState())) throw new Fail('a sync is waiting to be finished. Run `xtend sync --continue`, or `xtend sync --abort` to drop it.')
   if (paths.length) git('add', '--', ...paths)
   else git('add', '-A')
   if (!git('diff', '--cached', '--name-only')) throw new Fail('nothing to commit')
-  const problem = check(cfg)
+  const unproven = proof && command(proof)
+  const problem = unproven || check(cfg)
   if (problem) {
     console.log(problem)
-    log('not committed: the check failed. Your edits are staged. Fix them and run it again.')
+    log(`not committed: the ${unproven ? 'proof has to pass with the fix in place' : 'check failed'}. Your edits are staged. Fix them and run it again.`)
     process.exitCode = 2
     return
   }
-  git('commit', '-q', '-m', `xtend: ${request}`, '-m', why || request)
-  log('committed')
+  git('commit', '-q', '-m', `xtend: ${request}`, '-m', withTrailers(why || request, trailers))
+  log(trailers ? 'committed as a temporary fix' : 'committed')
   pushIfFork()
 }
 
 // --- sync --------------------------------------------------------------
 
 function sync(cfg, args = []) {
-  const flag = args.join()
-  if (flag && !['--prompt', '--continue', '--abort'].includes(flag)) throw new Fail('usage: xtend sync [--prompt | --continue | --abort]')
-  if (flag === '--continue' || flag === '--abort') return resumeSync(cfg, flag)
+  const [flag = '', ...more] = args
+  const usage = 'usage: xtend sync [--prompt | --continue [--temp "<what you fixed>" [--proof "<command>"]] | --abort]'
+  if (flag && !['--prompt', '--continue', '--abort'].includes(flag)) throw new Fail(usage)
+  if (more.length && (flag !== '--continue' || more[0] !== '--temp')) throw new Fail(usage)
+  if (flag === '--continue' || flag === '--abort') return resumeSync(cfg, flag, more.length ? more.slice(1) : null)
   requireClean()
   if (!tryGit('remote', 'get-url', 'upstream')) git('remote', 'add', 'upstream', cfg.upstream)
   git('fetch', '-q', 'upstream', cfg.branch)
@@ -542,11 +647,16 @@ function sync(cfg, args = []) {
   }
 
   const before = git('rev-parse', 'HEAD')
+  const temps = tempFixes(cfg)
+  const touched = git('diff', '--name-only', `HEAD...${theirs}`).split('\n').filter(Boolean)
   const incoming = git('log', '--no-merges', '--format=- %s', `HEAD..${theirs}`)
   const ours = git('log', '--no-merges', '--format=- %B', `${theirs}..HEAD`)
   run('git', ['merge', '--no-ff', '--no-commit', theirs])
   const conflicted = git('diff', '--name-only', '--diff-filter=U')
-  const { open, reused, wrong } = replay(conflicted)
+  const replayedNow = replay(conflicted)
+  const { reused, wrong } = replayedNow
+  let { open } = replayedNow
+  let yielded = []
   let agentRan = false
   let bad = []
 
@@ -556,15 +666,37 @@ function sync(cfg, args = []) {
     return markersLeft(conflicted) || check(cfg)
   }
 
+  // A conflict in a file that only proven temporary fixes changed is upstream reaching the same code. Take upstream's side, and keep it
+  // if every proof and the check pass; otherwise put the conflict back for the agent.
+  const stopgapOnly = (f) => {
+    const by = git('log', '--no-merges', '--format=%H', `${theirs}..${before}`, '--', f).split('\n').filter((sha) => sha && !temps.settled.has(sha))
+    return by.length > 0 && by.every((sha) => temps.find((t) => t.sha === sha)?.proof)
+  }
+  const yieldStopgaps = () => {
+    const files = open.split('\n').filter(stopgapOnly)
+    if (!files.length || !run('git', ['checkout', '--theirs', '--', ...files]).ok) return
+    git('add', '--', ...files)
+    const rest = open.split('\n').filter((f) => !files.includes(f)).join('\n')
+    const proofs = [...new Set(temps.filter((t) => t.proof && t.files.some((f) => files.includes(f))).map((t) => t.proof))]
+    const trouble = proofs.map(command).find(Boolean) || (rest ? null : verify())
+    if (trouble) return git('checkout', '-m', '--', ...files)
+    open = rest
+    yielded = files
+  }
+
   let problem
   try {
+    if (open) yieldStopgaps()
     problem = open ? `conflicts in:\n${open}` : verify()
     if (problem && reused.length) problem = `${replayed(reused)}\n\n${problem}`
     // For an agent that is already working in this repo: leave the merge open and hand it the same prompt the sync step would get.
     if (problem && flag === '--prompt') {
-      fs.writeFileSync(syncState(), JSON.stringify({ theirs, conflicted, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
+      // With no conflicts the index is exactly what the merge produced, so a fix made from here on can be told apart from the merge.
+      const tree = conflicted ? null : git('write-tree')
+      fs.writeFileSync(syncState(), JSON.stringify({ theirs, conflicted, touched, tree, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
       console.log(promptFor(cfg, 'sync', { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem }))
       log('the merge is open. Do what the prompt says, then run `xtend sync --continue`. `xtend sync --abort` puts everything back.')
+      if (tree) log('If upstream itself is broken, fix it and finish with `xtend sync --continue --temp "<what you fixed>" --proof "<command>"`. Your fix is then a temporary one, dropped when upstream no longer needs it.')
       process.exitCode = 2
       return
     }
@@ -586,21 +718,29 @@ function sync(cfg, args = []) {
     throw new Fail(`sync gave up, nothing changed:\n${problem}`)
   }
   const kept = reused.filter((f) => !bad.includes(f))
-  const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f))
+  const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f) && !yielded.includes(f))
   log([
     conflicted || agentRan ? 'merged upstream' : 'merged upstream cleanly',
     kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`,
+    yielded.length && `took upstream's code where only a temporary fix had been: ${yielded.join(', ')}`,
     fixed.length && `agent resolved: ${fixed.join(', ')}`,
     agentRan && !fixed.length && 'agent fixed what the check reported',
     bad.length && 'git forgot its old resolutions, because the agent had to change them',
   ].filter(Boolean).join('; '))
+  retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
   pushIfFork()
 }
 
-function resumeSync(cfg, flag) {
+function resumeSync(cfg, flag, asTemp = null) {
+  const stopgap = asTemp || []
   const file = syncState()
   if (!fs.existsSync(file)) throw new Fail('no sync is waiting. Start one with `xtend sync --prompt`.')
-  const { theirs, conflicted, reused } = readJson(file)
+  const { theirs, conflicted, reused, touched = [], tree = null } = readJson(file)
+  const proofAt = stopgap.indexOf('--proof')
+  const proof = proofAt >= 0 ? stopgap.splice(proofAt, 2)[1] || '' : ''
+  const request = stopgap.join(' ').trim()
+  if (asTemp && (!request || (proofAt >= 0 && !proof))) throw new Fail('usage: xtend sync --continue --temp "<what you fixed>" [--proof "<command>"]')
+  if (request && !tree) throw new Fail('--temp needs a merge that had no conflicts, or xtend cannot tell your fix from the merge. Finish with `xtend sync --continue`.')
   if (flag === '--abort') {
     git('reset', '-q', '--hard', 'HEAD')
     git('clean', '-qfd')
@@ -612,7 +752,7 @@ function resumeSync(cfg, flag) {
     throw new Fail('the merge was committed or aborted outside xtend, so there is nothing to continue. Run `xtend sync` again.')
   }
   git('add', '-A')
-  const problem = markersLeft(conflicted) || check(cfg)
+  const problem = markersLeft(conflicted) || (proof && command(proof)) || check(cfg)
   if (problem) {
     console.log(problem)
     log('not finished. Fix that, then run `xtend sync --continue` again, or `xtend sync --abort`.')
@@ -622,12 +762,24 @@ function resumeSync(cfg, flag) {
   const bad = Object.keys(reused).filter((f) => fileHash(f) !== reused[f])
   if (bad.length) fs.rmSync(git('rev-parse', '--git-path', 'rr-cache'), { recursive: true, force: true })
   else run('git', ['rerere'])
-  const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
-  if (!c.ok) throw new Fail(`git commit failed:\n${c.err || c.out}`)
+  const subject = `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`
+  if (request) {
+    // The merge is committed as git made it, and what was changed since becomes its own commit, marked temporary.
+    if (git('write-tree') === tree) throw new Fail('nothing changed since the merge, so there is no fix to record. Run `xtend sync --continue` without --temp.')
+    const merge = git('commit-tree', tree, '-p', 'HEAD', '-p', 'MERGE_HEAD', '-m', subject)
+    git('update-ref', 'HEAD', merge)
+    run('git', ['merge', '--quit'])
+    git('commit', '-q', '-m', `xtend: ${request}`, '-m', tempTrailers(true, proof))
+    log(`recorded "${request}" as a temporary fix`)
+  } else {
+    const c = run('git', ['commit', '-q', '-m', subject])
+    if (!c.ok) throw new Fail(`git commit failed:\n${c.err || c.out}`)
+  }
   fs.rmSync(file)
   const kept = Object.keys(reused).filter((f) => !bad.includes(f))
   const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f))
   log(['merged upstream', kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`, fixed.length && `resolved by hand: ${fixed.join(', ')}`].filter(Boolean).join('; '))
+  retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
   pushIfFork()
 }
 
@@ -1004,6 +1156,8 @@ try {
   else if (verb === 'agent') setAgent(loadConfig(), rest)
   else if (verb === 'daily') setDaily(loadConfig(), rest)
   else if (verb === 'commit') commitChange(loadConfig(), rest)
+  else if (verb === 'fix') fix(loadConfig(), rest)
+  else if (verb === 'temp') temp(loadConfig(), rest)
   else if (verb === 'sync') sync(loadConfig(), rest)
   else if (verb === 'share') share(loadConfig(), rest)
   else if (verb === 'sheet') writeSheet(loadConfig(false), rest)
