@@ -24,6 +24,14 @@ You are the agent, so edit the code directly instead of running `xtend "<request
 
 Record each change on its own with `xtend commit "<what the user asked for>" -m "<what you changed and why>"`. Add `-- <path>...` when the working tree holds more than one change. It runs the project's check, commits as `xtend: <request>` and pushes. If the check fails it exits 2 and commits nothing: fix the problem and run it again. Do not run `git commit` yourself. Later merges rely on that message to keep the change working, and the check is what keeps a bad change out.
 
+## Temporary fixes
+
+When the user wants something fixed that upstream should fix itself (a broken build, a type error, an upstream bug), record it as a temporary fix so xtend drops it once upstream no longer needs it: `xtend commit "<what you fixed>" -m "<why>" --proof "<command>"`. The proof is a command that passes with your fix and would fail without it today, such as the typecheck or the one test that covers the bug. Use `--temp` without a proof only when no command can tell; then the fix stays until its files match upstream. Keep each temporary fix in its own commit and as small as you can.
+
+`xtend temp` lists the temporary fixes still carried. `xtend temp --try` drops the ones whose proof now passes without them. Sync does the same for the files upstream touched. Never revert or edit a temporary fix by hand to make a merge easier.
+
+If `xtend sync --prompt` stops with no conflicts and a failing check, upstream broke itself. Fix it, then finish with `xtend sync --continue --temp "<what you fixed>" --proof "<command>"`.
+
 ## Writing the ref sheet yourself
 
 `xtend get` and `xtend sheet` start an agent CLI to write the sheet. If none can run where you are, `get` still sets up and pushes the copy, then says there is no ref sheet yet. Write it yourself: run `xtend sheet --prompt`, do what it prints, and commit only that file with `git commit -m "xtend: write ref sheet"`.

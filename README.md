@@ -182,6 +182,36 @@ A repo of your own inherits every workflow upstream ships, and on GitHub its CI,
 
 `--name` also works without `--private`, to name a public fork.
 
+## Temporary fixes
+
+Sometimes upstream is broken and you can't wait: a type error, a failing build, a bug in your way. Fix it in your copy as a temporary fix, and xTend drops it once upstream no longer needs it.
+
+```sh
+xtend fix "the inference screen passes an argument its helper does not take" --proof "npm run typecheck"
+xtend temp               # what you still carry, and why
+xtend temp --try         # drop the ones no longer needed, without waiting for a sync
+```
+
+A temporary fix is an ordinary commit with an `Xtend-Temporary` line. The proof is a command that passes once the fix is not needed. It has to pass with your fix in place, and it should fail without it today.
+
+On every sync, for each temporary fix whose files upstream touched:
+
+- If those files now match upstream, the fix is retired. Upstream's code is in its place.
+- If it has a proof, xTend reverts it and runs the proof and your check. If both pass, it stays reverted. If not, it stays.
+- If upstream rewrote the same lines and git reports a conflict, xTend takes upstream's side when the proof passes with it, and no agent is needed. Otherwise the conflict goes to your agent, which is told the change is a stopgap.
+
+Without a proof xTend cannot know, so the fix stays until its files match upstream. History is never rewritten: a fix ends with a commit that names it in an `Xtend-Retires` line.
+
+When upstream breaks its own build, a sync merges cleanly and then fails your check. Fix it inside the sync and it is recorded the same way:
+
+```sh
+xtend sync --prompt                                    # merge is clean, the check fails, the sync stays open
+# fix what upstream broke
+xtend sync --continue --temp "what you fixed" --proof "npm run typecheck"
+```
+
+The merge is committed exactly as git made it, and your fix is its own temporary commit on top.
+
 ## When your agent is already in the repo
 
 An agent working inside a session often cannot start a second agent CLI. It can still do every step itself:
