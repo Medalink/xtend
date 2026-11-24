@@ -13,7 +13,8 @@ description: Keep a customized fork of an open-source project with upstream merg
 - `xtend daily [on|off]` shows, adds or removes that Action. Turning it on commits and pushes a workflow to the user's fork, so ask first.
 - `xtend agent [preset or command]` shows or sets which agent CLI xtend runs: `claude`, `codex`, `gemini`, `amp`, `opencode`, or any command that reads the prompt on stdin or from `{file}`.
 - `xtend config [--json]` shows each step's agent, prompt, `add`, `after` and `tries`, and the file that set each one. Change them for one machine in `~/.config/xtend/config.json`. Only `.xtend/config.json` reaches the daily Action.
-- `xtend sync` merges upstream. Conflicts git has resolved before are reused without the agent. When it fails it resets to where it started and exits non-zero. Report its message to the user. Do not finish the merge by hand.
+- `xtend sync` merges upstream. Conflicts git has resolved before are reused without the agent. When it fails it resets to where it started and exits non-zero. Report its message to the user. Never commit the merge yourself; see "Syncing yourself" for the way to resolve one.
+- `xtend update` refreshes `.xtend/xtend.mjs`, the copy the daily Action runs, from the xtend you ran it with.
 - `xtend share --json` prints what upstream accepts (`takes` is `pr`, `issue` or `null`, with the reasons in `notes`) and a numbered list of the user's changes.
 - `xtend share <n>... --yes` ports those changes onto upstream and opens one draft PR or issue.
 
@@ -24,6 +25,10 @@ You are the agent, so edit the code directly instead of running `xtend "<request
 ## Writing the ref sheet yourself
 
 `xtend get` and `xtend sheet` start an agent CLI to write the sheet. If none can run where you are, `get` still sets up and pushes the copy, then says there is no ref sheet yet. Write it yourself: run `xtend sheet --prompt`, do what it prints, and commit only that file with `git commit -m "xtend: write ref sheet"`.
+
+## Syncing yourself
+
+If no agent CLI can run where you are, `xtend sync` cannot resolve a conflict. Run `xtend sync --prompt` instead. A clean merge finishes on its own. Otherwise it exits 2 with the merge left open and prints what to do: the local customizations, what upstream changed, and what is wrong. Edit the files to resolve it, then run `xtend sync --continue`. It checks for conflict markers, runs the check, commits the merge and pushes. If it prints a problem and exits 2 again, fix that and run it again. `xtend sync --abort` puts everything back. Do not run `git commit` or `git merge --abort` yourself.
 
 ## Giving back
 

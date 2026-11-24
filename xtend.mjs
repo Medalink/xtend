@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -37,15 +38,19 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
       [--daily]                         also turn on the daily sync Action
       [--private]                       keep it in a new private repo of yours instead of a public fork
       [--origin <url>]                  or keep it in an empty repo you already made
+      [--replace]                       with --origin: the repo has a starter commit (README, license); replace it
       [--name <name>]                   call your copy something else, e.g. --name mcode
   xtend "<what you want>"               your agent makes the change and commits it
   xtend sync                            merge upstream; your agent resolves conflicts
+  xtend sync --prompt                   merge upstream; print what is left for an agent that resolves it itself
+  xtend sync --continue | --abort       finish or drop a sync that --prompt left open
   xtend sheet                           (re)write the ref sheet agents read before editing
   xtend sheet --prompt                  print what the sheet step asks, for an agent that writes it itself
   xtend share [--json]                  what upstream accepts, and which of your changes you could offer
   xtend share <n>... [--yes]            offer those changes upstream, the way the owner asks for them
   xtend agent [preset or command]       show or change the agent, e.g. \`xtend agent codex -m gpt-6\`
   xtend daily [on | off]                show, add or remove the GitHub Action that runs xtend sync every day
+  xtend update                          refresh the copy of xtend this repo carries in .xtend/, for the daily Action
   xtend config [--json]                 each step's agent, prompt and commands, and which file set them
   xtend config prompts [<step>...]      copy the prompts to this device to edit: change, sync, port, sheet
 
@@ -155,7 +160,11 @@ function sheet() {
   return '(no ref sheet yet)'
 }
 
+const syncState = () => git('rev-parse', '--git-path', 'xtend-sync.json')
+const fileHash = (f) => (fs.existsSync(f) ? crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex') : null)
+
 function requireClean() {
+  if (fs.existsSync(syncState())) throw new Fail('a sync is waiting to be finished. Run `xtend sync --continue`, or `xtend sync --abort` to drop it.')
   if (git('status', '--porcelain', '--untracked-files=all')) throw new Fail('working tree has uncommitted changes. Commit or stash them first.')
 }
 
@@ -330,6 +339,33 @@ function githubSlug(src) {
   return m && !fs.existsSync(src) ? `${m[1]}/${m[2]}` : null
 }
 
+function remoteHeads(url) {
+  const r = run('git', ['ls-remote', '--heads', url])
+  if (!r.ok) throw new Fail(`cannot reach ${url}:\n${r.err || r.out}`)
+  return Object.fromEntries(r.out.split('\n').filter(Boolean).map((l) => l.split(/\s+/).reverse()).map(([ref, sha]) => [ref.replace('refs/heads/', ''), sha]))
+}
+
+// The starter commit stays reachable on replaced-<branch>, and the lease refuses if anyone pushed since get looked.
+function replaceStarter(branch, sha) {
+  git('fetch', '-q', 'origin', branch)
+  git('push', '-q', 'origin', `${sha}:refs/heads/replaced-${branch}`)
+  git('push', '-q', `--force-with-lease=${branch}:${sha}`, 'origin', `HEAD:${branch}`)
+  log(`replaced the starter commit on ${branch}; it is kept on replaced-${branch}`)
+}
+
+// A copy in your own repo inherits every workflow upstream ships: its CI, releases and deploys would run on your account.
+function quietWorkflows() {
+  const dir = path.dirname(WORKFLOW_FILE)
+  const theirs = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f) && f !== path.basename(WORKFLOW_FILE)) : []
+  if (!theirs.length) return
+  const origin = run('git', ['remote', 'get-url', 'origin']).out
+  const repo = origin && githubSlug(origin)
+  const off = repo && hasGh() ? theirs.filter((f) => gh(['workflow', 'disable', f, '-R', repo]).ok) : []
+  const left = theirs.length - off.length
+  if (off.length) log(`turned off ${off.length} workflow${off.length === 1 ? '' : 's'} that came from upstream, so they do not run on your account. Turn one back on with: gh workflow enable <file>`)
+  if (left) log(`upstream ships ${left} workflow${left === 1 ? '' : 's'} in ${dir} that ${left === 1 ? 'is' : 'are'} still on. On GitHub they run in your copy, on your account: turn Actions off in the repo's settings, or turn each off with \`gh workflow disable <file>\`.`)
+}
+
 function get(args) {
   const daily = args.includes('--daily')
   const priv = args.includes('--private')
@@ -340,12 +376,18 @@ function get(args) {
   const named = nameAt >= 0 ? args.splice(nameAt, 2)[1] || '' : null
   const originAt = args.indexOf('--origin')
   const origin = originAt >= 0 ? args.splice(originAt, 2)[1] || '' : null
+  const replace = args.includes('--replace')
+  args = args.filter((a) => a !== '--replace')
   const src = args[0]
   if (args.length > 1) throw new Fail(`${args.slice(1).join(' ')} is not read. Quote the agent with its flags, like --agent "codex -m gpt-6"`)
-  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily] [--private | --origin <url>] [--name <name>]')
+  if (!src || !agent) throw new Fail('usage: xtend get <owner/repo | url | path> [--agent <preset or command>] [--daily] [--private | --origin <url> [--replace]] [--name <name>]')
   if (named !== null && !/^[\w.-]+$/.test(named)) throw new Fail('--name takes one name of letters, digits, dots, dashes and underscores, like --name mcode')
   if (origin !== null && (!origin || origin.startsWith('--'))) throw new Fail('--origin takes the URL of an empty repo of yours, like --origin https://github.com/you/mcode.git')
   if (origin && priv) throw new Fail('--private creates the repo and --origin uses one you made. Pick one.')
+  if (replace && !origin) throw new Fail('--replace goes with --origin: it replaces the starter commit of a repo you made.')
+  // Asked before cloning, so a repo that is unreachable or not empty costs seconds instead of a full clone and a rejected push.
+  const starter = origin ? remoteHeads(origin) : {}
+  if (Object.keys(starter).length && !replace) throw new Fail(`${origin} is not empty: it has ${Object.keys(starter).join(', ')}. GitHub adds a commit when you tick "Add a README" or pick a license.\nUse an empty repo, or add --replace: xtend keeps what is there on a replaced-<branch> branch and puts your copy in its place.`)
   const slug = githubSlug(src)
   const name = named || path.basename(slug || src).replace(/\.git$/, '')
   if (fs.existsSync(name)) throw new Fail(`${name} already exists`)
@@ -398,9 +440,11 @@ function get(args) {
     }
   }
 
+  if (starter[branch]) replaceStarter(branch, starter[branch])
   if (daily) setDaily(cfg, ['on'])
   else {
     pushIfFork()
+    if (priv || origin) quietWorkflows()
     log('daily sync is off. Turn it on with: xtend daily on')
   }
   log(`upstream ${stance(readPolicy(cfg))}`)
@@ -456,7 +500,10 @@ function change(cfg, request) {
 
 // --- sync --------------------------------------------------------------
 
-function sync(cfg) {
+function sync(cfg, args = []) {
+  const flag = args.join()
+  if (flag && !['--prompt', '--continue', '--abort'].includes(flag)) throw new Fail('usage: xtend sync [--prompt | --continue | --abort]')
+  if (flag === '--continue' || flag === '--abort') return resumeSync(cfg, flag)
   requireClean()
   if (!tryGit('remote', 'get-url', 'upstream')) git('remote', 'add', 'upstream', cfg.upstream)
   git('fetch', '-q', 'upstream', cfg.branch)
@@ -485,6 +532,14 @@ function sync(cfg) {
   try {
     problem = open ? `conflicts in:\n${open}` : verify()
     if (problem && reused.length) problem = `${replayed(reused)}\n\n${problem}`
+    // For an agent that is already working in this repo: leave the merge open and hand it the same prompt the sync step would get.
+    if (problem && flag === '--prompt') {
+      fs.writeFileSync(syncState(), JSON.stringify({ theirs, conflicted, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
+      console.log(promptFor(cfg, 'sync', { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem }))
+      log('the merge is open. Do what the prompt says, then run `xtend sync --continue`. `xtend sync --abort` puts everything back.')
+      process.exitCode = 2
+      return
+    }
     if (problem) {
       agentRan = true
       problem = resolveMerge(cfg, { ours, incoming, problem }, verify)
@@ -511,6 +566,40 @@ function sync(cfg) {
     agentRan && !fixed.length && 'agent fixed what the check reported',
     bad.length && 'git forgot its old resolutions, because the agent had to change them',
   ].filter(Boolean).join('; '))
+  pushIfFork()
+}
+
+function resumeSync(cfg, flag) {
+  const file = syncState()
+  if (!fs.existsSync(file)) throw new Fail('no sync is waiting. Start one with `xtend sync --prompt`.')
+  const { theirs, conflicted, reused } = readJson(file)
+  if (flag === '--abort') {
+    git('reset', '-q', '--hard', 'HEAD')
+    git('clean', '-qfd')
+    fs.rmSync(file)
+    return log('sync dropped, nothing changed')
+  }
+  if (!fs.existsSync(git('rev-parse', '--git-path', 'MERGE_HEAD'))) {
+    fs.rmSync(file)
+    throw new Fail('the merge was committed or aborted outside xtend, so there is nothing to continue. Run `xtend sync` again.')
+  }
+  git('add', '-A')
+  const problem = markersLeft(conflicted) || check(cfg)
+  if (problem) {
+    console.log(problem)
+    log('not finished. Fix that, then run `xtend sync --continue` again, or `xtend sync --abort`.')
+    process.exitCode = 2
+    return
+  }
+  const bad = Object.keys(reused).filter((f) => fileHash(f) !== reused[f])
+  if (bad.length) fs.rmSync(git('rev-parse', '--git-path', 'rr-cache'), { recursive: true, force: true })
+  else run('git', ['rerere'])
+  const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
+  if (!c.ok) throw new Fail(`git commit failed:\n${c.err || c.out}`)
+  fs.rmSync(file)
+  const kept = Object.keys(reused).filter((f) => !bad.includes(f))
+  const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f))
+  log(['merged upstream', kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`, fixed.length && `resolved by hand: ${fixed.join(', ')}`].filter(Boolean).join('; '))
   pushIfFork()
 }
 
@@ -805,9 +894,23 @@ function setDaily(cfg, [want]) {
   pushIfFork()
   const repo = origin && githubSlug(origin)
   if (want === 'on' && repo && hasGh() && !gh(['api', '-X', 'PUT', `repos/${repo}/actions/permissions`, '-F', 'enabled=true']).ok) log(`could not turn on Actions; turn them on at https://github.com/${repo}/actions`)
+  if (want === 'on') quietWorkflows()
   const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
   if (want === 'on' && cfg.branch && branch !== cfg.branch) log(`GitHub runs scheduled Actions only from the default branch, and this is ${branch}. Merge it into ${cfg.branch}.`)
   log(want === 'on' ? `daily sync is on. ${repo ? actionNote(actionAgent(cfg.repo), repo, cfg.repo.agents) : 'It runs once origin is on GitHub.'}` : 'daily sync is off')
+}
+
+// The repo carries the xtend that set it up. Run a newer xtend here to hand the repo, and its daily Action, that version.
+function update() {
+  const mine = fileURLToPath(import.meta.url)
+  const theirs = `${DIR}/xtend.mjs`
+  if (fileHash(mine) === fileHash(theirs)) return log(`${theirs} is already this xtend`)
+  requireClean()
+  fs.copyFileSync(mine, theirs)
+  git('add', theirs)
+  git('commit', '-q', '-m', 'xtend: update xtend')
+  log(`updated ${theirs}`)
+  pushIfFork()
 }
 
 function setAgent(cfg, spec) {
@@ -872,9 +975,10 @@ try {
   else if (verb === 'get') get(rest)
   else if (verb === 'agent') setAgent(loadConfig(), rest)
   else if (verb === 'daily') setDaily(loadConfig(), rest)
-  else if (verb === 'sync') sync(loadConfig())
+  else if (verb === 'sync') sync(loadConfig(), rest)
   else if (verb === 'share') share(loadConfig(), rest)
   else if (verb === 'sheet') writeSheet(loadConfig(false), rest)
+  else if (verb === 'update' && !rest.length) (loadConfig(), update())
   else if (verb === 'config') config(rest)
   else change(loadConfig(), [verb, ...rest].join(' '))
 } catch (e) {

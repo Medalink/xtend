@@ -176,7 +176,24 @@ If the repo already exists and is empty, say one you made by hand or on a host t
 xtend get owner/repo --name mine --origin https://github.com/you/mine.git
 ```
 
+xTend asks that repo what it holds before it clones. If it is not empty, usually because GitHub added a README or license when you made it, xTend stops and says so. Add `--replace` to put your copy in its place; the commit that was there stays on a `replaced-<branch>` branch.
+
+A repo of your own inherits every workflow upstream ships, and on GitHub its CI, releases and deploys would run on your account. After `get --private`, `get --origin` and `daily on`, xTend turns those workflows off with `gh workflow disable` and leaves its own on. Without `gh`, or on another host, it tells you they are still on.
+
 `--name` also works without `--private`, to name a public fork.
+
+## When your agent is already in the repo
+
+An agent working inside a session often cannot start a second agent CLI. It can still do every step itself:
+
+```sh
+xtend sheet --prompt     # print the ref sheet instructions; write the sheet, commit it as "xtend: write ref sheet"
+xtend sync --prompt      # merge upstream; if something is left, print it and leave the merge open
+xtend sync --continue    # check the resolution, commit the merge and push
+xtend sync --abort       # or put everything back
+```
+
+`sync --continue` holds the same line as a normal sync: no conflict markers, and your check passes, or nothing is committed.
 
 ## Daily sync
 
@@ -194,7 +211,7 @@ A failed sync exits non-zero, so the run fails and GitHub emails you. GitHub's d
 
 - `.xtend/config.json` holds the upstream URL, branch, agent command and check command, plus any [step settings](#tune-each-step) the daily Action should use.
 - `.xtend/sheet.md` is the generated ref sheet. It is skipped when upstream ships `XTEND.md`.
-- `.xtend/xtend.mjs` is a copy of this tool, which the Action runs, so CI needs no install step.
+- `.xtend/xtend.mjs` is a copy of this tool, which the Action runs, so CI needs no install step. `xtend update` refreshes it from the xtend you run.
 
 ## Develop
 
