@@ -21,6 +21,10 @@ description: Keep a customized fork of an open-source project with upstream merg
 
 You are the agent, so edit the code directly instead of running `xtend "<request>"`. Commit each change on its own, with a message that says what the user asked for and why: `git commit -m "xtend: <request>" -m "<what you changed and why>"`. Later merges rely on that message to keep the change working. Read `XTEND.md` or `.xtend/sheet.md` first. Prefer new files and small edits to files that upstream changes often.
 
+## Writing the ref sheet yourself
+
+`xtend get` and `xtend sheet` start an agent CLI to write the sheet. If none can run where you are, `get` still sets up and pushes the copy, then says there is no ref sheet yet. Write it yourself: run `xtend sheet --prompt`, do what it prints, and commit only that file with `git commit -m "xtend: write ref sheet"`.
+
 ## Giving back
 
 - Run `xtend share --json` and show the user what upstream takes and what they could offer.
