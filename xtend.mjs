@@ -41,6 +41,7 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
   xtend "<what you want>"               your agent makes the change and commits it
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sheet                           (re)write the ref sheet agents read before editing
+  xtend sheet --prompt                  print what the sheet step asks, for an agent that writes it itself
   xtend share [--json]                  what upstream accepts, and which of your changes you could offer
   xtend share <n>... [--yes]            offer those changes upstream, the way the owner asks for them
   xtend agent [preset or command]       show or change the agent, e.g. \`xtend agent codex -m gpt-6\`
@@ -206,9 +207,14 @@ function render(template, vars, where) {
 }
 
 // Runs the step's agent until `verify` returns null, feeding each failure back in. The step's `after` command runs after every attempt, before `verify`.
+function promptFor(cfg, step, vars) {
+  const { prompt: source, template, add } = cfg.steps[step]
+  return render(template, vars, source.file ? source.value : `the built-in ${step} prompt`) + (add ? `\n\n${add.value}` : '')
+}
+
 function agentUntil(cfg, step, vars, verify) {
-  const { agent, prompt: source, template, add, after, tries } = cfg.steps[step]
-  const prompt = render(template, vars, source.file ? source.value : `the built-in ${step} prompt`) + (add ? `\n\n${add.value}` : '')
+  const { agent, after, tries } = cfg.steps[step]
+  const prompt = promptFor(cfg, step, vars)
   let problem = null
   for (let i = 1; i <= tries.value; i++) {
     log(`asking agent (${agent.value.split(' ')[0]}), try ${i}/${tries.value}`)
@@ -379,8 +385,18 @@ function get(args) {
   git('add', '-A')
   git('commit', '-q', '-m', 'xtend: set up')
 
+  // The clone and its set-up are done by now. A sheet the agent could not write is no reason to leave them unpushed.
   if (fs.existsSync(OWNER_SHEET)) log(`upstream ships ${OWNER_SHEET}, using it`)
-  else writeSheet(cfg)
+  else {
+    try {
+      writeSheet(cfg)
+    } catch (e) {
+      if (!(e instanceof Fail)) throw e
+      git('reset', '-q', '--hard')
+      log(`${e.message}\nThere is no ref sheet yet. Check the agent with \`xtend agent\`, then run \`xtend sheet\`.`)
+      process.exitCode = 1
+    }
+  }
 
   if (daily) setDaily(cfg, ['on'])
   else {
@@ -400,9 +416,12 @@ function hotFiles() {
   return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([f, n]) => `${n}\t${f}`).join('\n')
 }
 
-function writeSheet(cfg) {
+function writeSheet(cfg, args = []) {
+  if (args.length && args.join() !== '--prompt') throw new Fail('usage: xtend sheet [--prompt]')
   const target = fs.existsSync(CONFIG) ? FORK_SHEET : OWNER_SHEET
   const vars = { target, hot: hotFiles() || '(no history)' }
+  // For an agent that is already working in this repo and cannot start another one: it follows the prompt itself, then commits the sheet.
+  if (args.length) return console.log(promptFor(cfg, 'sheet', vars))
   const r = agentUntil(cfg, 'sheet', vars, () => (fs.existsSync(target) ? null : `${target} was not written`))
   if (r.problem) throw new Fail(`could not write ${target}: ${r.problem}`)
   if (target === OWNER_SHEET && !/^contributions:/m.test(fs.readFileSync(target, 'utf8'))) fs.appendFileSync(target, CONTRIBUTIONS)
@@ -855,7 +874,7 @@ try {
   else if (verb === 'daily') setDaily(loadConfig(), rest)
   else if (verb === 'sync') sync(loadConfig())
   else if (verb === 'share') share(loadConfig(), rest)
-  else if (verb === 'sheet') writeSheet(loadConfig(false))
+  else if (verb === 'sheet') writeSheet(loadConfig(false), rest)
   else if (verb === 'config') config(rest)
   else change(loadConfig(), [verb, ...rest].join(' '))
 } catch (e) {

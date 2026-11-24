@@ -88,7 +88,7 @@ If upstream isn't on GitHub, you get the branch and a write-up in `.git/xtend-of
 
 ## Owners
 
-Nothing is required. To help people who extend your project, run `xtend sheet` and commit the `XTEND.md` it writes: a short map of the code, the build and test commands, where to add things, and which files churn. Agents read it before every change and every merge. If a project has none, `xtend get` writes its own into `.xtend/sheet.md`.
+Nothing is required. To help people who extend your project, run `xtend sheet` and commit the `XTEND.md` it writes: a short map of the code, the build and test commands, where to add things, and which files churn. Agents read it before every change and every merge. If a project has none, `xtend get` writes its own into `.xtend/sheet.md`. If the agent can't write it, `get` still finishes and pushes, and `xtend sheet` writes it later. `xtend sheet --prompt` prints the instructions, for an agent that is already working in the repo to follow itself.
 
 The sheet ends with `contributions: pr`. Change it to `issue` or `none`, and list what you would welcome under it. Every fork's `xtend share` reads it from your latest code before offering anything.
 
