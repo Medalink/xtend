@@ -274,7 +274,138 @@ function check(cfg) {
 // prepare runs once a merge is in the tree, before anything is checked: new upstream code often needs its dependencies installed first.
 // verify runs after the check, on a sync only. It is the place for what is too slow to run on every commit, such as a typecheck or a build.
 const prepare = (cfg) => (cfg.prepare ? command(cfg.prepare) : null)
-const checkMerge = (cfg) => prepare(cfg) || check(cfg) || (cfg.verify ? command(cfg.verify) : null)
+// `runs` are the commands that rebuild generated files this merge disturbed. They come after prepare, since a generator needs its
+// dependencies, and what they and prepare write (a rebuilt catalog, a lockfile the installer brought up to date) belongs to the merge.
+function checkMerge(cfg, runs = []) {
+  const unready = prepare(cfg) || runs.map(command).find(Boolean)
+  if (unready) return unready
+  if (cfg.prepare || runs.length) git('add', '-A')
+  return check(cfg) || (cfg.verify ? command(cfg.verify) : null)
+}
+
+// --- conflicts that settle by rule -------------------------------------
+
+const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'Cargo.lock', 'poetry.lock', 'uv.lock', 'Pipfile.lock', 'Gemfile.lock', 'composer.lock', 'go.sum', 'flake.lock'])
+const MERGES = ['json', 'theirs', 'ours']
+
+// "generated" in the config names files a command writes, with * for any run of characters. A plain name only tells status the file needs
+// no seam. { files, merge, run } also says how a conflict in it settles: merge is json (key by key), theirs or ours, and run rebuilds it after.
+function generatedRules(cfg) {
+  return (cfg.generated || []).map((g) => (typeof g === 'string' ? { files: g } : g)).map((g) => {
+    if (typeof g.files !== 'string' || (g.merge && !MERGES.includes(g.merge))) throw new Fail(`${CONFIG}: a generated entry is a file pattern, or { "files": "<pattern>", "merge": "${MERGES.join(' | ')}", "run": "<command>" }`)
+    return { ...g, test: new RegExp(`^${g.files.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`) }
+  })
+}
+
+// Two sides of a JSON file mostly conflict as text because both added keys side by side. Key by key there is nothing to decide:
+// take whichever side changed each key. Null when both sides changed the same key differently, which is for someone to judge.
+function mergeJson(base, ours, theirs) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+  const walk = (b, o, t) => {
+    if (same(o, t) || same(t, b)) return { value: o }
+    if (same(o, b)) return { value: t }
+    if (!isObj(o) || !isObj(t)) return null
+    // Upstream's order, with each key of ours that upstream lacks placed after the key it follows on our side.
+    const keys = Object.keys(t)
+    Object.keys(o).forEach((k, i, all) => {
+      if (k in t) return
+      const after = all.slice(0, i).reverse().find((prev) => keys.includes(prev))
+      keys.splice(after === undefined ? 0 : keys.indexOf(after) + 1, 0, k)
+    })
+    const out = {}
+    for (const k of keys) {
+      const r = walk(isObj(b) ? b[k] : undefined, o[k], t[k])
+      if (!r) return null
+      if (r.value !== undefined) out[k] = r.value
+    }
+    return { value: out }
+  }
+  return walk(base, ours, theirs)
+}
+
+const staged = (stage, file) => spawnSync('git', ['show', `:${stage}:${file}`], { encoding: 'utf8', maxBuffer: 64 << 20 })
+const jsonShape = (text) => ({ indent: text.match(/^([ \t]+)"/m)?.[1] ?? 2, end: text.endsWith('\n') ? '\n' : '' })
+
+// Settles the conflicts that need no judgment, right after the merge and before anyone is asked:
+// - a file this side deleted and the other side went on editing stays deleted, since deleting it was the decision, and so does a
+//   block of lines this side cut out of a file;
+// - a lockfile, or a generated file the config says so for, is taken whole from one side, to be rebuilt by prepare or its own command;
+// - a JSON file is merged key by key: any the config names, and any other whose layout xtend can write back exactly as it was.
+function settle(cfg) {
+  const rules = generatedRules(cfg)
+  const stages = new Map()
+  for (const line of git('ls-files', '-u').split('\n').filter(Boolean)) {
+    const [meta, file] = line.split('\t')
+    stages.set(file, (stages.get(file) || new Set()).add(Number(meta.split(' ')[2])))
+  }
+  const done = { kept: [], merged: [], taken: [], cut: [], runs: [] }
+  const used = new Set()
+  const settled = new Set()
+  for (const [file, has] of stages) {
+    if (!has.has(2) && has.has(3)) {
+      git('rm', '-q', '-f', '--', file)
+      done.kept.push(file)
+      settled.add(file)
+      continue
+    }
+    if (!has.has(2) || !has.has(3)) continue
+    const rule = rules.find((r) => r.merge && r.test.test(file))
+    const how = rule?.merge ?? (LOCKFILES.has(path.basename(file)) ? 'theirs' : file.endsWith('.json') ? 'json' : null)
+    if (how === 'theirs' || how === 'ours') {
+      git('checkout', `--${how}`, '--', file)
+      git('add', '--', file)
+      done.taken.push(file)
+    } else if (how === 'json') {
+      const [b, o, t] = [1, 2, 3].map((n) => (has.has(n) ? staged(n, file).stdout : '{}'))
+      let merged
+      try {
+        const shape = jsonShape(o)
+        // Unnamed files are merged only when writing ours back gives the same bytes, so the merge cannot reformat a file nobody asked it to.
+        if (!rule && JSON.stringify(JSON.parse(o), null, shape.indent) + shape.end !== o) continue
+        merged = mergeJson(JSON.parse(b), JSON.parse(o), JSON.parse(t))
+        if (!merged) continue
+        fs.writeFileSync(file, JSON.stringify(merged.value, null, shape.indent) + shape.end)
+      } catch {
+        continue
+      }
+      git('add', '--', file)
+      done.merged.push(file)
+    } else continue
+    settled.add(file)
+    if (rule) used.add(rule)
+  }
+  // The same decision inside a file: a block this side cut out, which the other side went on editing, stays cut. Shown with the common
+  // ancestor, a conflict whose "ours" half is empty is exactly that. Files git has already resolved from memory are left to that memory.
+  const open = new Set(run('git', ['rerere', 'remaining']).out.split('\n'))
+  const hunk = /^<<<<<<< [^\n]*\n([\s\S]*?)^\|\|\|\|\|\|\| [^\n]*\n([\s\S]*?)^=======\r?\n[\s\S]*?^>>>>>>> [^\n]*\n/gm
+  for (const [file, has] of stages) {
+    if (settled.has(file) || !open.has(file) || [1, 2, 3].some((n) => !has.has(n))) continue
+    if (!run('git', ['checkout', '--conflict=diff3', '--', file]).ok) continue
+    let blocks = 0
+    let left = 0
+    const text = fs.readFileSync(file, 'utf8')
+    const out = text.replace(hunk, (all, ours, base) => (ours === '' && base.trim() !== '' ? (blocks++, '') : (left++, all)))
+    if (!blocks) {
+      run('git', ['checkout', '--conflict=merge', '--', file])
+      continue
+    }
+    fs.writeFileSync(file, out)
+    if (!left) git('add', '--', file)
+    done.cut.push(blocks === 1 ? file : `${file} (${blocks})`)
+  }
+  done.runs = [...new Set(rules.filter((r) => used.has(r) && r.run).map((r) => r.run))]
+  return done
+}
+
+const some = (files) => (files.length > 6 ? `${files.slice(0, 6).join(', ')} and ${files.length - 6} more` : files.join(', '))
+const settledLines = (done) => [
+  done.kept.length && `kept ${plural(done.kept.length, 'file')} deleted that the other side had gone on editing: ${some(done.kept)}`,
+  done.cut.length && `kept blocks cut out that the other side had gone on editing, in ${plural(done.cut.length, 'file')}: ${some(done.cut)}`,
+  done.merged.length && `merged ${plural(done.merged.length, 'JSON file')} key by key: ${some(done.merged)}`,
+  done.taken.length && `took one side's copy of ${plural(done.taken.length, 'generated file')}, to be rebuilt: ${some(done.taken)}`,
+  done.runs.length && `rebuilt them with: ${done.runs.join(' && ')}`,
+].filter(Boolean)
 
 // rerere replays resolutions it recorded before, but leaves those files unmerged. Stage them, so only the rest goes to the agent.
 // If the agent later has to change a replayed file, that memory was wrong. git can't reliably forget one file's resolution, so wrong() drops them all.
@@ -785,9 +916,7 @@ function status(cfg, args) {
     if (hasRef(ROOT_REF)) root = { repo: cfg.root, upstreamBehind: count(`${theirs}..${ROOT_REF}`), behind: count(`HEAD..${ROOT_REF}`), newest: git('log', '-1', '--format=%cs', ROOT_REF), synced: !!cfg.syncRoot }
   }
   const fixes = tempFixes(cfg)
-  // "generated" in the config names files a command rewrites (a route tree, a message catalog), with * for any run of characters.
-  // A merge that disturbs one is settled by running the command again, so such a file needs no seam.
-  const generated = (cfg.generated || []).map((g) => new RegExp(`^${String(g).split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`))
+  const generated = generatedRules(cfg).map((r) => r.test)
   const out = {
     upstream: cfg.upstream,
     branch: cfg.branch,
@@ -883,6 +1012,8 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
   const incoming = git('log', '--no-merges', '--format=- %s', `HEAD..${theirs}`)
   const ours = git('log', '--no-merges', '--format=- %B', ...ownRange(cfg))
   run('git', ['merge', '--no-ff', '--no-commit', theirs])
+  const done = settle(cfg)
+  const byRule = settledLines(done)
   const conflicted = git('diff', '--name-only', '--diff-filter=U')
   const replayedNow = replay(conflicted)
   const { reused, wrong } = replayedNow
@@ -894,7 +1025,7 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
   const verify = () => {
     if (!fs.existsSync(git('rev-parse', '--git-path', 'MERGE_HEAD'))) return 'the merge was committed or aborted; leave that to xtend'
     git('add', '-A')
-    return markersLeft(conflicted) || checkMerge(cfg)
+    return markersLeft(conflicted) || checkMerge(cfg, done.runs)
   }
 
   // A conflict in a file that only proven temporary fixes changed is upstream reaching the same code. Take upstream's side, and keep it
@@ -920,11 +1051,12 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
     if (open) yieldStopgaps()
     problem = open ? `conflicts in:\n${open}` : verify()
     if (problem && reused.length) problem = `${replayed(reused)}\n\n${problem}`
+    if (problem && byRule.length) problem = `xtend has already settled these by rule, so leave them as they are unless the failure below is in them:\n${byRule.map((l) => `- ${l}`).join('\n')}\n\n${problem}`
     // For an agent that is already working in this repo: leave the merge open and hand it the same prompt the sync step would get.
     if (problem && flag === '--prompt') {
       // With no conflicts the index is exactly what the merge produced, so a fix made from here on can be told apart from the merge.
       const tree = conflicted ? null : git('write-tree')
-      fs.writeFileSync(syncState(), JSON.stringify({ theirs, label, conflicted, touched, tree, news, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
+      fs.writeFileSync(syncState(), JSON.stringify({ theirs, label, conflicted, touched, tree, news, byRule, runs: done.runs, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
       console.log(promptFor(cfg, 'sync', { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem, seams: seamList(cfg) }))
       log('the merge is open. Do what the prompt says, then run `xtend sync --continue`. `xtend sync --abort` puts everything back.')
       if (tree) log('If upstream itself is broken, fix it and finish with `xtend sync --continue --temp "<what you fixed>" --proof "<command>"`. Your fix is then a temporary one, dropped when upstream no longer needs it.')
@@ -964,6 +1096,7 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
     agentRan && !fixed.length && 'agent fixed what the check reported',
     bad.length && 'git forgot its old resolutions, because the agent had to change them',
   ].filter(Boolean).join('; '))
+  for (const line of byRule) log(line)
   retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
   reportNews(news)
   pushIfFork()
@@ -974,7 +1107,7 @@ function resumeSync(cfg, flag, asTemp = null) {
   const stopgap = asTemp || []
   const file = syncState()
   if (!fs.existsSync(file)) throw new Fail('no sync is waiting. Start one with `xtend sync --prompt`.')
-  const { theirs, conflicted, reused, touched = [], tree = null, news = null, label = theirs } = readJson(file)
+  const { theirs, conflicted, reused, touched = [], tree = null, news = null, label = theirs, byRule = [], runs = [] } = readJson(file)
   const proofAt = stopgap.indexOf('--proof')
   const proof = proofAt >= 0 ? stopgap.splice(proofAt, 2)[1] || '' : ''
   const request = stopgap.join(' ').trim()
@@ -991,7 +1124,7 @@ function resumeSync(cfg, flag, asTemp = null) {
     throw new Fail('the merge was committed or aborted outside xtend, so there is nothing to continue. Run `xtend sync` again.')
   }
   git('add', '-A')
-  const problem = markersLeft(conflicted) || prepare(cfg) || (proof && command(proof)) || check(cfg) || (cfg.verify ? command(cfg.verify) : null)
+  const problem = markersLeft(conflicted) || (proof && (prepare(cfg) || command(proof))) || checkMerge(cfg, runs)
   if (problem) {
     console.log(problem)
     log('not finished. Fix that, then run `xtend sync --continue` again, or `xtend sync --abort`.')
@@ -1017,6 +1150,7 @@ function resumeSync(cfg, flag, asTemp = null) {
   fs.rmSync(file)
   const kept = Object.keys(reused).filter((f) => !bad.includes(f))
   const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f))
+  for (const line of byRule) log(line)
   log([`merged ${label === theirs ? 'upstream' : label}`, kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`, fixed.length && `resolved by hand: ${fixed.join(', ')}`].filter(Boolean).join('; '))
   retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
   if (news) reportNews(news)

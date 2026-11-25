@@ -850,5 +850,109 @@ assert.match(lateYml, / {6}- \{"uses":"actions\/setup-node@v4","with":\{"node-ve
 assert.match(lateYml, /GH_TOKEN: \$\{\{ github\.token \}\}\n$/)
 assert.doesNotMatch(lateYml, /npm i -g|secrets\./, 'no agent means nothing to install and no key')
 
+// Conflicts that need no judgment settle by rule, so a sync with nobody there still lands: a file this copy deleted that upstream
+// keeps editing, a lockfile, a message catalog both sides added keys to, and a package.json both sides added a dependency to.
+const gUp = path.join(root, 'gup')
+fs.mkdirSync(gUp)
+git(gUp, 'init', '-q', '-b', 'main')
+git(gUp, 'config', 'user.email', 'o@x'), git(gUp, 'config', 'user.name', 'owner')
+const pretty = (v) => JSON.stringify(v, null, 2) + '\n'
+const writeUp = (files, msg) => {
+  for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(gUp, file), body)
+  git(gUp, 'add', '-A'), git(gUp, 'commit', '-q', '-m', msg)
+}
+writeUp({
+  'app.js': "console.log('hello')\n",
+  'telemetry.js': "console.log('sending')\n",
+  'kept.js': "console.log('kept')\n",
+  'block.js': "const a = 1\n// report usage\nconst sent = a\nconst b = 2\n// c\nconst c = 3\n",
+  'messages.json': pretty({ hello: 'Hello', bye: 'Bye' }),
+  'package.json': pretty({ name: 'app', dependencies: { alpha: '1.0.0' } }),
+  'pnpm-lock.yaml': 'alpha@1.0.0\n',
+  'compact.json': '{"a":1,\n "b":2}\n',
+}, 'initial')
+r = xtend(work, ['get', gUp, '--name', 'ruled'])
+assert.equal(r.status, 0, r.stderr + r.stdout)
+const ruled = path.join(work, 'ruled')
+git(ruled, 'config', 'user.email', 'u@x'), git(ruled, 'config', 'user.name', 'user')
+const rCfg = path.join(ruled, '.xtend/config.json')
+const installed = path.join(root, 'installed')
+// The installer stands in for `pnpm install`: it brings the lockfile up to date with package.json. The catalog's own command sorts it.
+fs.writeFileSync(path.join(root, 'install.mjs'), "import fs from 'node:fs'\nconst deps = JSON.parse(fs.readFileSync('package.json', 'utf8')).dependencies\nfs.writeFileSync('pnpm-lock.yaml', Object.entries(deps).map(([k, v]) => `${k}@${v}\\n`).join(''))\nfs.appendFileSync(process.argv[2], 'install\\n')\n")
+fs.writeFileSync(path.join(root, 'sort.mjs'), "import fs from 'node:fs'\nconst m = JSON.parse(fs.readFileSync('messages.json', 'utf8'))\nfs.writeFileSync('messages.json', JSON.stringify(Object.fromEntries(Object.entries(m).sort()), null, 2) + '\\n')\nfs.appendFileSync(process.argv[2], 'sort\\n')\n")
+fs.writeFileSync(rCfg, JSON.stringify({
+  ...JSON.parse(fs.readFileSync(rCfg)),
+  prepare: `node ${JSON.stringify(path.join(root, 'install.mjs'))} ${JSON.stringify(installed)}`,
+  check: 'node app.js',
+  generated: [{ files: 'messages.json', merge: 'json', run: `node ${JSON.stringify(path.join(root, 'sort.mjs'))} ${JSON.stringify(installed)}` }, 'compact.json'],
+}, null, 2) + '\n')
+const writeMine = (files) => { for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(ruled, file), body) }
+git(ruled, 'rm', '-q', 'telemetry.js')
+writeMine({
+  'kept.js': "console.log('kept, and mine')\n",
+  'block.js': "const a = 1\nconst b = 2\n// c\nconst c = 3\n",
+  'messages.json': pretty({ hello: 'Hello', mine: 'Mine', bye: 'Bye' }),
+  'package.json': pretty({ name: 'app', dependencies: { alpha: '1.0.0', mine: '2.0.0' } }),
+  'pnpm-lock.yaml': 'alpha@1.0.0\nmine@2.0.0\n',
+})
+assert.equal(xtend(ruled, ['commit', 'drop telemetry, add my own strings and dependency'], dead).status, 0)
+fs.rmSync(installed, { force: true })
+git(gUp, 'rm', '-q', 'kept.js')
+writeUp({
+  'telemetry.js': "console.log('sending more')\n",
+  'block.js': "const a = 1\n// report more usage\nconst sent = a + 1\nconst b = 2\n// c\nconst c = 3\n",
+  'messages.json': pretty({ hello: 'Hello', thanks: 'Thanks', bye: 'Bye' }),
+  'package.json': pretty({ name: 'app', dependencies: { alpha: '1.1.0', beta: '3.0.0' } }),
+  'pnpm-lock.yaml': 'alpha@1.1.0\nbeta@3.0.0\n',
+}, 'more telemetry, a string, a dependency')
+r = xtend(ruled, ['sync', '--prompt'], dead)
+assert.equal(r.status, 2, r.stderr + r.stdout)
+assert.match(r.stdout, /xtend has already settled these by rule[\s\S]*- kept 1 file deleted that the other side had gone on editing: telemetry\.js\n- kept blocks cut out that the other side had gone on editing, in 1 file: block\.js\n- merged 2 JSON files key by key: messages\.json, package\.json\n- took one side's copy of 1 generated file, to be rebuilt: pnpm-lock\.yaml\n- rebuilt them with: node [^\n]*sort\.mjs/)
+assert.match(r.stdout, /conflicts in:\nkept\.js\n/, 'a file this copy changed and upstream deleted is still for someone to judge')
+assert.equal(git(ruled, 'diff', '--name-only', '--diff-filter=U'), 'kept.js')
+assert.ok(!fs.existsSync(path.join(ruled, 'telemetry.js')), 'the deletion holds')
+assert.equal(fs.readFileSync(path.join(ruled, 'block.js'), 'utf8'), "const a = 1\nconst b = 2\n// c\nconst c = 3\n", 'and so does a block cut out of a file')
+assert.deepEqual(JSON.parse(fs.readFileSync(path.join(ruled, 'package.json'))).dependencies, { alpha: '1.1.0', mine: '2.0.0', beta: '3.0.0' }, 'each side keeps what it changed, ours placed where it stood')
+writeMine({ 'kept.js': "console.log('kept, and mine')\n" })
+r = xtend(ruled, ['sync', '--continue'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /kept 1 file deleted[\s\S]*merged upstream; resolved by hand: kept\.js/)
+assert.equal(fs.readFileSync(installed, 'utf8'), 'install\nsort\n', 'prepare runs first, then the catalog is rebuilt')
+assert.equal(fs.readFileSync(path.join(ruled, 'messages.json'), 'utf8'), pretty({ bye: 'Bye', hello: 'Hello', mine: 'Mine', thanks: 'Thanks' }))
+assert.equal(git(ruled, 'show', 'HEAD:pnpm-lock.yaml'), 'alpha@1.1.0\nmine@2.0.0\nbeta@3.0.0', 'the lockfile the installer brought up to date is part of the merge')
+assert.equal(git(ruled, 'status', '--porcelain'), '')
+
+// With nothing left to judge, the same kind of sync lands with no agent at all.
+writeMine({ 'messages.json': pretty({ bye: 'Bye', hello: 'Hello', mine: 'Mine', more: 'More', thanks: 'Thanks' }) })
+assert.equal(xtend(ruled, ['commit', 'another string'], dead).status, 0)
+writeUp({ 'telemetry.js': "console.log('sending even more')\n", 'messages.json': pretty({ hello: 'Hello', thanks: 'Thanks', bye: 'Bye', please: 'Please' }) }, 'another string upstream')
+r = xtend(ruled, ['sync'], none)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /merged upstream cleanly\nxtend: kept 1 file deleted[^\n]*telemetry\.js\nxtend: merged 1 JSON file key by key: messages\.json\n/)
+assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(ruled, 'messages.json')))), ['bye', 'hello', 'mine', 'more', 'please', 'thanks'])
+
+// In a file with a cut block and a real conflict, the cut is made and the rest is shown with the lines both sides started from.
+writeMine({ 'block.js': "const a = 1\nconst b = 2\n// c\nconst c = 'mine'\n" })
+assert.equal(xtend(ruled, ['commit', 'my own c'], dead).status, 0)
+writeUp({ 'block.js': "const a = 1\n// report even more usage\nconst sent = a + 2\nconst b = 2\n// c\nconst c = 'theirs'\n" }, 'more reporting, another c')
+r = xtend(ruled, ['sync', '--prompt'], dead)
+assert.equal(r.status, 2, r.stderr + r.stdout)
+assert.match(r.stdout, /kept blocks cut out[^\n]*in 1 file: block\.js\n[\s\S]*conflicts in:\nblock\.js/)
+assert.match(fs.readFileSync(path.join(ruled, 'block.js'), 'utf8'), /^const a = 1\nconst b = 2\n\/\/ c\n<<<<<<< [^\n]*\nconst c = 'mine'\n\|\|\|\|\|\|\| [^\n]*\nconst c = 3\n=======\nconst c = 'theirs'\n>>>>>>> [^\n]*\n$/)
+assert.equal(xtend(ruled, ['sync', '--abort'], dead).status, 0)
+git(ruled, 'reset', '-q', '--hard', 'HEAD~1')
+git(gUp, 'reset', '-q', '--hard', 'HEAD~1')
+
+// A key both sides changed differently is a real conflict, and a JSON file xtend could not write back as it was is left alone.
+writeMine({ 'messages.json': pretty({ bye: 'Goodbye', hello: 'Hello', mine: 'Mine', more: 'More', please: 'Please', thanks: 'Thanks' }), 'compact.json': '{"a":1,\n "b":2,\n "mine":3}\n' })
+assert.equal(xtend(ruled, ['commit', 'reword bye'], dead).status, 0)
+writeUp({ 'messages.json': pretty({ hello: 'Hello', thanks: 'Thanks', bye: 'See you', please: 'Please' }), 'compact.json': '{"a":1,\n "b":2,\n "theirs":4}\n' }, 'reword bye upstream')
+r = xtend(ruled, ['sync'], none)
+assert.equal(r.status, 3, r.stderr + r.stdout)
+assert.match(r.stdout, /conflicts in:\ncompact\.json\nmessages\.json/)
+assert.equal(git(ruled, 'status', '--porcelain'), '')
+fs.writeFileSync(rCfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(rCfg)), generated: [{ files: 'nothing.json', merge: 'both' }] }))
+assert.match(xtend(ruled, ['status', '--no-fetch'], dead).stderr, /a generated entry is a file pattern, or \{ "files"/)
+
 fs.rmSync(root, { recursive: true, force: true })
 console.log('e2e ok')
