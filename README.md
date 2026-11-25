@@ -51,6 +51,29 @@ The demo throws each merge away and syncs again from scratch. Every conflict rep
 
 If the agent has to change a file git replayed, that memory was wrong, and xTend clears it. `xtend share` uses the same memory, so updating an offer reuses how the agent ported each change last time.
 
+## Conflicts that settle by rule
+
+rerere only replays a conflict it has seen, word for word. Many conflicts are new every time and still need no judgment, so xTend settles them itself, right after the merge and before anyone is asked:
+
+- **A file you deleted that upstream keeps editing stays deleted.** Deleting it was the decision. (The other way round, a file you changed that upstream deleted, is still yours to judge.)
+- **A block you cut out of a file stays cut, the same way.** When your side of a conflict is empty and the lines both sides started from were not, you removed them and upstream edited them. xTend removes them again and leaves any other conflict in that file for the agent, shown with the original lines.
+- **A lockfile is taken from upstream.** Your `prepare` installer then brings your own dependencies back into it, and what it writes is part of the merge. xTend knows the usual names: `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `uv.lock`, `go.sum` and others.
+- **A JSON file is merged key by key.** Two sides that each added a key side by side conflict as text and not as data. Each key goes to whichever side changed it, with your new keys placed where they stood. A key both sides changed differently is a real conflict and is left for the agent. xTend does this for any JSON file it can write back byte for byte, so it never reformats a file by merging it.
+- **A generated file follows what you tell it**, under `generated` in `.xtend/config.json`:
+
+```json
+{
+  "generated": [
+    { "files": "src/i18n/*.json", "merge": "json", "run": "npm run i18n:format" },
+    { "files": "src/routeTree.gen.ts", "merge": "theirs", "run": "npm run build:routes" }
+  ]
+}
+```
+
+`merge` is `json`, `theirs` or `ours`, and `run` rebuilds the files after `prepare`, before your check. The command runs only when a merge disturbed one of them.
+
+A sync says what it settled this way, and the agent's prompt lists it too, so nothing is settled behind your back. With these rules a sync that would have stopped on a catalog or a lockfile often lands with nobody there.
+
 ## Giving back
 
 `xtend share` lists your changes and says what upstream accepts. It sends nothing.
@@ -243,7 +266,7 @@ xtend status             # behind and ahead, open sync, your files, seams, tempo
 xtend status --json      # the same, for an agent to read
 ```
 
-Status sorts the files of upstream's that you changed: those with a seam, those in a temporary fix, and those with neither, which it lists. A file on that last list is one a merge can quietly undo, so it is where to record your next seam. Files a command rewrites, such as a generated route tree or a message catalog, need none: name them under `"generated": ["src/routeTree.gen.ts", "src/i18n/*.json"]` and status counts them apart.
+Status sorts the files of upstream's that you changed: those with a seam, those in a temporary fix, and those with neither, which it lists. A file on that last list is one a merge can quietly undo, so it is where to record your next seam. Files a command rewrites, such as a generated route tree or a message catalog, need none: name them under `generated` (see [Conflicts that settle by rule](#conflicts-that-settle-by-rule)) and status counts them apart.
 
 If your upstream is itself someone's fork, set `"root": "owner/repo"` in the config and status also says how far upstream trails it.
 

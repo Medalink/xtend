@@ -50,6 +50,10 @@ If no agent CLI can run where you are, `xtend sync` cannot resolve a conflict. R
 
 A sync runs the repo's `prepare` command once the merge is in the tree (installing what new upstream code needs), then the check, then `verify` (the slow gate: a typecheck or a build). Nothing is committed or pushed until all three pass, and `--continue` runs them again. When it finishes, sync prints what came in: how many commits and files, which of them are upstream files this copy changed, and any host named in the incoming lines that this copy had not named before. Read those files and look at any new host before you tell the user the sync is done.
 
+## Conflicts xtend settles itself
+
+Before it asks you, a sync settles what needs no judgment: a file this copy deleted that upstream kept editing stays deleted, and so does a block of lines this copy cut out of a file, a lockfile is taken from upstream for the `prepare` installer to bring up to date, a JSON file is merged key by key, and files listed under `generated` in `.xtend/config.json` follow their own `merge` and `run`. The prompt names everything settled this way. Leave those files as they are unless the failing check points into one of them. When you see the same kind of generated file conflict again and again, add it to `generated` with the command that rebuilds it instead of resolving it by hand each time.
+
 ## Upstream that is itself a fork
 
 When `.xtend/config.json` names a `root`, upstream was forked from it. `xtend status` shows how far upstream and this copy each trail the root. `xtend sync --root --prompt` merges the root directly and works like any other sync; with `"syncRoot": true` a plain sync takes upstream and then the root, one merge at a time, so run `xtend sync --prompt` again after each `--continue` until it says it is up to date. Expect the root to carry what upstream removed: when the check blocks something the root brought back, remove it again the way upstream did, and never loosen the check to get a merge through.
