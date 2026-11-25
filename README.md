@@ -213,6 +213,40 @@ xtend sync --continue --temp "what you fixed" --proof "npm run typecheck"
 
 The merge is committed exactly as git made it, and your fix is its own temporary commit on top.
 
+## Seams, and the slow checks
+
+Some changes hang on one line inside a file of upstream's: the call that starts your feature, your entry in a list. Upstream can rewrite around that line and the merge stays clean, with your feature unhooked and nothing to tell you. Record the line and xtend looks for it in every check:
+
+```sh
+xtend seam src/server.ts "MyReactor.layerStart," -m "starts my reactor"
+xtend seams              # ok or GONE for each
+```
+
+A commit or a sync that loses a seam stops and names it. The sync prompt lists them for the agent too.
+
+Three commands in `.xtend/config.json` gate a sync, in this order:
+
+```json
+{
+  "prepare": "pnpm install --frozen-lockfile",
+  "check": "node scripts/guard.mjs",
+  "verify": "pnpm typecheck"
+}
+```
+
+`prepare` runs once the merge is in the tree, so new upstream code has its dependencies before anything is judged. `check` runs on every commit and every sync, so keep it fast. `verify` runs on a sync only, after the check: put the typecheck or build there. Nothing is committed or pushed until all three pass.
+
+When a sync finishes it says what came in: how many commits and files, which of them are files of upstream's that you changed, and any host named in the incoming lines that your copy had not named before. `xtend status` shows the same for the last sync, with everything else about where the copy stands:
+
+```sh
+xtend status             # behind and ahead, open sync, your files, seams, temporary fixes, commands, last sync
+xtend status --json      # the same, for an agent to read
+```
+
+Status sorts the files of upstream's that you changed: those with a seam, those in a temporary fix, and those with neither, which it lists. A file on that last list is one a merge can quietly undo, so it is where to record your next seam. Files a command rewrites, such as a generated route tree or a message catalog, need none: name them under `"generated": ["src/routeTree.gen.ts", "src/i18n/*.json"]` and status counts them apart.
+
+If your upstream is itself someone's fork, set `"root": "owner/repo"` in the config and status also says how far upstream trails it.
+
 ## When your agent is already in the repo
 
 An agent working inside a session often cannot start a second agent CLI. It can still do every step itself:

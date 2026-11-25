@@ -18,6 +18,14 @@ description: Keep a customized fork of an open-source project with upstream merg
 - `xtend share --json` prints what upstream accepts (`takes` is `pr`, `issue` or `null`, with the reasons in `notes`) and a numbered list of the user's changes.
 - `xtend share <n>... --yes` ports those changes onto upstream and opens one draft PR or issue.
 
+## Start here
+
+Run `xtend status` before anything else (`--json` to read it as data). One call says how far this copy is behind upstream and ahead of it, whether upstream itself trails the repo it was forked from (`root`), whether a sync is open, which of upstream's files this copy has changed, whether every seam is still held, which temporary fixes are carried, the prepare, check and verify commands, and what the last sync brought in. It exits 2 when a seam is gone or a sync is open.
+
+## Seams
+
+When your change needs a line inside one of upstream's files (the call, import or list entry that hooks your code in, or a line of upstream's that your code relies on), record it: `xtend seam <file> "<exact text>" -m "<what it hooks in>"`, then `xtend commit` as usual. Upstream can rewrite around such a line and the merge stays clean, with the feature silently unhooked. Every check looks for each seam first, so a commit or a sync that loses one stops and names it. Keep the text short and exact: one line, no leading spaces. `xtend seams` lists them, and `xtend status` lists the files of upstream's you changed that have no seam yet: record one for each, unless a command rewrites the file, in which case add it to `generated` in `.xtend/config.json`. When a seam is gone after a sync, put it back where upstream's new code calls for it, or `xtend seam --drop <file> "<text>"` if the change no longer needs it.
+
 ## Making a change yourself
 
 You are the agent, so edit the code directly instead of running `xtend "<request>"`. Read `XTEND.md` or `.xtend/sheet.md` first. Prefer new files and small edits to files that upstream changes often.
@@ -39,6 +47,8 @@ If `xtend sync --prompt` stops with no conflicts and a failing check, upstream b
 ## Syncing yourself
 
 If no agent CLI can run where you are, `xtend sync` cannot resolve a conflict. Run `xtend sync --prompt` instead. A clean merge finishes on its own. Otherwise it exits 2 with the merge left open and prints what to do: the local customizations, what upstream changed, and what is wrong. Edit the files to resolve it, then run `xtend sync --continue`. It checks for conflict markers, runs the check, commits the merge and pushes. If it prints a problem and exits 2 again, fix that and run it again. `xtend sync --abort` puts everything back. Do not run `git commit` or `git merge --abort` yourself.
+
+A sync runs the repo's `prepare` command once the merge is in the tree (installing what new upstream code needs), then the check, then `verify` (the slow gate: a typecheck or a build). Nothing is committed or pushed until all three pass, and `--continue` runs them again. When it finishes, sync prints what came in: how many commits and files, which of them are upstream files this copy changed, and any host named in the incoming lines that this copy had not named before. Read those files and look at any new host before you tell the user the sync is done.
 
 ## Giving back
 
