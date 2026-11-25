@@ -28,7 +28,7 @@ Record each change on its own with `xtend commit "<what the user asked for>" -m 
 
 When the user wants something fixed that upstream should fix itself (a broken build, a type error, an upstream bug), record it as a temporary fix so xtend drops it once upstream no longer needs it: `xtend commit "<what you fixed>" -m "<why>" --proof "<command>"`. The proof is a command that passes with your fix and would fail without it today, such as the typecheck or the one test that covers the bug. Use `--temp` without a proof only when no command can tell; then the fix stays until its files match upstream. Keep each temporary fix in its own commit and as small as you can.
 
-`xtend temp` lists the temporary fixes still carried. `xtend temp --try` drops the ones whose proof now passes without them. Sync does the same for the files upstream touched. Never revert or edit a temporary fix by hand to make a merge easier.
+`xtend temp` lists the temporary fixes still carried. `xtend temp --try` drops the ones whose proof now passes without them. Sync does the same for the files upstream touched. A proof that fails even with the fix in place has stopped measuring it (a renamed script, say); xtend names it, and `xtend temp --proof <commit> "<command>"` gives the fix a new one. Never revert or edit a temporary fix by hand to make a merge easier.
 
 If `xtend sync --prompt` stops with no conflicts and a failing check, upstream broke itself. Fix it, then finish with `xtend sync --continue --temp "<what you fixed>" --proof "<command>"`.
 

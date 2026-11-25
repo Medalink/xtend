@@ -44,6 +44,7 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
   xtend fix "<what is broken>"          like a change, but temporary: a stopgap for something upstream will fix
       [--proof "<command>"]             passes once the stopgap is not needed; lets sync drop it for you
   xtend temp [--try]                    list the temporary fixes you still carry; --try drops the ones no longer needed
+  xtend temp --proof <commit> "<cmd>"   give a temporary fix a new proof, when its old one no longer runs
   xtend commit "<what you wanted>"      record a change an agent already made itself: run the check, commit, push
       [-m "<what changed and why>"]     the body later merges read to keep the change working
       [--temp] [--proof "<command>"]    record it as a temporary fix, as xtend fix does
@@ -521,6 +522,7 @@ function fix(cfg, args) {
 const TEMP = 'Xtend-Temporary'
 const PROOF = 'Xtend-Proof'
 const RETIRES = 'Xtend-Retires'
+const REPROVES = 'Xtend-Reproves'
 
 function tempTrailers(temp, proof) {
   if (proof && /\n/.test(proof)) throw new Fail('--proof takes one command on one line')
@@ -538,17 +540,19 @@ function withTrailers(body, trailers) {
 function tempFixes(cfg) {
   const theirs = `upstream/${cfg.branch}`
   const trailer = (key) => `%(trailers:key=${key},valueonly,separator=%x20)`
-  const rows = git('log', '--no-merges', '--reverse', `--format=%H%x1f%s%x1f${trailer(TEMP)}%x1f${trailer(PROOF)}%x1f${trailer(RETIRES)}%x1e`, `${theirs}..HEAD`)
+  const rows = git('log', '--no-merges', '--reverse', `--format=%H%x1f%s%x1f${trailer(TEMP)}%x1f${trailer(PROOF)}%x1f${trailer(RETIRES)}%x1f${trailer(REPROVES)}%x1e`, `${theirs}..HEAD`)
     .split('\x1e').map((r) => r.trim()).filter(Boolean).map((r) => r.split('\x1f').map((c) => c.trim()))
   const retired = new Set(rows.flatMap((r) => (r[4] || '').split(/\s+/).filter(Boolean)))
+  // A later `xtend temp --proof` replaces the proof the fix was committed with.
+  const reproved = new Map(rows.filter((r) => r[5]).map((r) => [r[5], r[3]]))
   const live = rows.filter(([sha, , temp]) => temp && !retired.has(sha)).map(([sha, subject, , proof]) => ({
     sha,
     subject: subject.replace(/^xtend: /, ''),
-    proof,
+    proof: reproved.get(sha) ?? proof,
     files: git('show', '--name-only', '--format=', sha).split('\n').filter(Boolean),
   }))
   // A retired fix and the commit that retired it cancel out, so neither counts as a local change any more.
-  live.settled = new Set([...retired, ...rows.filter((r) => r[4]).map((r) => r[0])])
+  live.settled = new Set([...retired, ...rows.filter((r) => r[4] || r[5]).map((r) => r[0])])
   return live
 }
 
@@ -565,6 +569,11 @@ function retireTemps(cfg, fixes) {
       continue
     }
     if (!fix.proof) continue
+    // A proof that fails with the fix in place has stopped measuring the fix, so it would keep the fix forever.
+    if (command(fix.proof)) {
+      log(`temporary fix "${fix.subject}" has a proof that fails even with the fix in place: ${fix.proof}\n  give it one that runs: xtend temp --proof ${fix.sha.slice(0, 10)} "<command>"`)
+      continue
+    }
     const head = git('rev-parse', 'HEAD')
     const undo = () => {
       run('git', ['revert', '--quit'])
@@ -581,8 +590,25 @@ function retireTemps(cfg, fixes) {
   }
 }
 
+function reprove(cfg, [sha, proof]) {
+  if (!sha || !proof) throw new Fail('usage: xtend temp --proof <commit> "<command>"')
+  requireClean()
+  const fix = tempFixes(cfg).filter((f) => f.sha.startsWith(sha))
+  if (fix.length !== 1) throw new Fail(`${fix.length ? 'more than one' : 'no'} temporary fix starts with ${sha}. \`xtend temp\` lists them.`)
+  const failed = command(proof)
+  if (failed) throw new Fail(`the proof has to pass with the fix in place.\n${failed}`)
+  git('commit', '-q', '--allow-empty', '-m', `xtend: new proof for temporary fix: ${fix[0].subject}`, '-m', `${REPROVES}: ${fix[0].sha}\n${PROOF}: ${proof}`)
+  pushIfFork()
+  log(`temporary fix "${fix[0].subject}" is now proved by: ${proof}`)
+}
+
 function temp(cfg, args) {
-  if (args.length && args.join() !== '--try') throw new Fail('usage: xtend temp [--try]')
+  if (args[0] === '--proof') {
+    if (args.length !== 3) throw new Fail('usage: xtend temp --proof <commit> "<command>"')
+    if (!tryGit('rev-parse', '--verify', '-q', `upstream/${cfg.branch}`)) throw new Fail('upstream has not been fetched yet. Run `xtend sync` first.')
+    return reprove(cfg, args.slice(1))
+  }
+  if (args.length && args.join() !== '--try') throw new Fail('usage: xtend temp [--try | --proof <commit> "<command>"]')
   if (!tryGit('rev-parse', '--verify', '-q', `upstream/${cfg.branch}`)) throw new Fail('upstream has not been fetched yet. Run `xtend sync` first.')
   if (args.length) {
     requireClean()
