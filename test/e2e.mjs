@@ -620,6 +620,24 @@ assert.match(fs.readFileSync(tApp, 'utf8'), /^<<<<<<< /m, 'the conflict is put b
 assert.equal(xtend(tfix, ['sync', '--abort'], dead).status, 0)
 assert.match(tTemp(), /define yell so it runs/)
 
+// A proof can stop running, say when a script is renamed. xtend says so instead of carrying the fix forever, and takes a new proof.
+const yell = git(tfix, 'log', '--format=%H', '--grep', 'define yell so it runs', '-1')
+const flag = path.join(root, 'proof-flag')
+fs.writeFileSync(flag, '')
+const flagProof = `node -e "require('fs').statSync(process.argv[1])" ${JSON.stringify(flag)}`
+assert.match(xtend(tfix, ['temp', '--proof', yell.slice(0, 10)], dead).stderr, /usage: xtend temp --proof/)
+assert.match(xtend(tfix, ['temp', '--proof', 'ffffffff', 'node app.js'], dead).stderr, /no temporary fix starts with ffffffff/)
+assert.match(xtend(tfix, ['temp', '--proof', yell.slice(0, 10), 'node missing.js'], dead).stderr, /proof has to pass with the fix in place/)
+r = xtend(tfix, ['temp', '--proof', yell.slice(0, 10), flagProof], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(git(tfix, 'log', '-1', '--format=%s%n%(trailers)'), /xtend: new proof for temporary fix: define yell so it runs\nXtend-Reproves: [0-9a-f]{40}\nXtend-Proof: node -e/)
+assert.match(tTemp(), /define yell so it runs\n.*\n\s+proof: node -e/, 'the new proof replaces the old one')
+fs.rmSync(flag)
+r = xtend(tfix, ['temp', '--try'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /has a proof that fails even with the fix in place[\s\S]*xtend temp --proof [0-9a-f]{10}/, 'a proof that no longer runs is called out')
+assert.match(tTemp(), /define yell so it runs/, 'and the fix is kept')
+
 // xtend fix has the agent make the stopgap.
 const hUp = path.join(root, 'hup')
 fs.mkdirSync(hUp)

@@ -190,6 +190,7 @@ Sometimes upstream is broken and you can't wait: a type error, a failing build, 
 xtend fix "the inference screen passes an argument its helper does not take" --proof "npm run typecheck"
 xtend temp               # what you still carry, and why
 xtend temp --try         # drop the ones no longer needed, without waiting for a sync
+xtend temp --proof <commit> "<command>"   # give one a new proof, when its old one no longer runs
 ```
 
 A temporary fix is an ordinary commit with an `Xtend-Temporary` line. The proof is a command that passes once the fix is not needed. It has to pass with your fix in place, and it should fail without it today.
