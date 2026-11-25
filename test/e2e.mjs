@@ -656,5 +656,130 @@ assert.match(git(hfix, 'log', '-1', '--format=%s%n%(trailers)'), /xtend: say how
 assert.match(xtend(hfix, ['temp']).stdout, /say howdy/)
 assert.match(xtend(hfix, ['temp', '--now']).stderr, /usage: xtend temp/)
 
+// Seams, prepare and verify, the news a sync brings, and status: what an agent working in the copy needs on every sync.
+// Upstream here is itself a copy of another repo, the root, which has moved on without it.
+const sRoot = path.join(root, 'sroot')
+fs.mkdirSync(sRoot)
+git(sRoot, 'init', '-q', '-b', 'main')
+git(sRoot, 'config', 'user.email', 'o@x'), git(sRoot, 'config', 'user.name', 'owner')
+fs.writeFileSync(path.join(sRoot, 'app.js'), "const plugins = []\nfunction start() {\n  plugins.forEach((p) => p())\n}\nstart()\n")
+fs.writeFileSync(path.join(sRoot, 'notes.txt'), 'notes\n')
+git(sRoot, 'add', '-A'), git(sRoot, 'commit', '-q', '-m', 'initial')
+const sUp = path.join(root, 'sup')
+git(root, 'clone', '-q', sRoot, sUp)
+git(sUp, 'config', 'user.email', 'o@x'), git(sUp, 'config', 'user.name', 'owner')
+fs.writeFileSync(path.join(sRoot, 'notes.txt'), 'more notes\n')
+git(sRoot, 'commit', '-qam', 'root moves on')
+const commitSup = (file, body, msg) => {
+  fs.writeFileSync(path.join(sUp, file), body)
+  git(sUp, 'add', '-A'), git(sUp, 'commit', '-q', '-m', msg)
+}
+r = xtend(work, ['get', sUp, '--name', 'seamed'])
+assert.equal(r.status, 0, r.stderr + r.stdout)
+const seamed = path.join(work, 'seamed')
+git(seamed, 'config', 'user.email', 'u@x'), git(seamed, 'config', 'user.name', 'user')
+const sCfg = path.join(seamed, '.xtend/config.json')
+const setCfg = (more) => fs.writeFileSync(sCfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(sCfg)), ...more }, null, 2) + '\n')
+const seamedApp = path.join(seamed, 'app.js')
+const readSeamed = () => JSON.parse(fs.readFileSync(sCfg))
+
+// The copy hooks a plugin in beside upstream's start(), and depends on upstream still calling the plugins.
+fs.writeFileSync(seamedApp, "const plugins = []\nplugins.push(() => console.log('mine'))\nfunction start() {\n  plugins.forEach((p) => p())\n}\nstart()\n")
+assert.match(xtend(seamed, ['seam', 'app.js'], dead).stderr, /usage: xtend seam/)
+assert.match(xtend(seamed, ['seam', 'app.js', 'plugins.run()'], dead).stderr, /does not have that text/, 'a seam has to be there when it is recorded')
+r = xtend(seamed, ['seam', 'app.js', 'plugins.forEach((p) => p())', '-m', 'runs my plugin'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.deepEqual(readSeamed().seams, [{ file: 'app.js', has: 'plugins.forEach((p) => p())', why: 'runs my plugin' }])
+assert.equal(xtend(seamed, ['seam', 'app.js', 'plugins.forEach((p) => p())', '-m', 'runs my plugin'], dead).status, 0)
+assert.equal(readSeamed().seams.length, 1, 'recording a seam twice keeps one')
+r = xtend(seamed, ['commit', 'add my plugin'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(xtend(seamed, ['seams'], dead).stdout, /^ok {4}app\.js: plugins\.forEach\(\(p\) => p\(\)\) {2}\(runs my plugin\)$/m)
+
+// A change that removes the seam is refused like any failed check.
+fs.writeFileSync(seamedApp, "const plugins = []\nplugins.push(() => console.log('mine'))\n")
+r = xtend(seamed, ['commit', 'tidy up'], dead)
+assert.equal(r.status, 2)
+assert.match(r.stdout, /a seam is gone:\n- app\.js no longer has `plugins\.forEach\(\(p\) => p\(\)\)`, which runs my plugin/)
+git(seamed, 'reset', '-q', '--hard', 'HEAD')
+
+// prepare runs before the check, verify after it and on a sync only.
+const prepared = path.join(root, 'prepared')
+setCfg({
+  prepare: `node -e "require('fs').writeFileSync(process.argv[1], '')" ${JSON.stringify(prepared)}`,
+  check: `node -e "require('fs').statSync('notes.txt')"`,
+  verify: 'node app.js',
+  root: sRoot,
+})
+r = xtend(seamed, ['commit', 'set the commands'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.ok(!fs.existsSync(prepared), 'a commit needs no prepare')
+
+// Upstream drops the loop the seam names, in lines the copy never touched: the merge is clean and the plugin is silently unhooked.
+commitSup('app.js', "const plugins = []\nfunction start() {\n  // plugins are gone, see https://tracker.example.io/42\n}\nstart()\n", 'drop plugins')
+r = xtend(seamed, ['status'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /^upstream  .*: this copy is 1 behind and 4 ahead\. `xtend sync` brings it in$/m)
+assert.match(r.stdout, /^root      .*sroot: upstream is 1 behind it \(its newest commit is from \d{4}-\d\d-\d\d\)$/m, 'status says when upstream trails its own source')
+assert.match(r.stdout, /^yours     1 file of upstream's changed: 1 with a seam$/m)
+assert.match(r.stdout, /^seams     1 held$/m)
+assert.match(r.stdout, /^last sync none recorded/m)
+const sHead = git(seamed, 'rev-parse', 'HEAD')
+r = xtend(seamed, ['sync', '--prompt'], dead)
+assert.equal(r.status, 2, r.stderr + r.stdout)
+assert.match(r.stdout, /## Seams[^\n]*\n- app\.js: `plugins\.forEach\(\(p\) => p\(\)\)` \(runs my plugin\)/, 'the sync prompt lists the seams')
+assert.match(r.stdout, /a seam is gone:\n- app\.js no longer has/, 'a clean merge that drops a seam is not finished')
+assert.ok(fs.existsSync(prepared), 'prepare ran once the merge was in the tree')
+r = xtend(seamed, ['status'], dead)
+assert.equal(r.status, 2)
+assert.match(r.stdout, /^sync      one is open/m)
+assert.match(r.stdout, /^seams     1 of 1 GONE:\n {10}- app\.js no longer has/m)
+
+// Putting the seam back the wrong way passes the check and fails verify, so the sync stays open and nothing is pushed.
+fs.writeFileSync(seamedApp, "const plugins = []\nplugins.push(() => console.log('mine'))\nfunction start() {\n  plugins.forEach((p) => p())\n  missing()\n}\nstart()\n")
+r = xtend(seamed, ['sync', '--continue'], dead)
+assert.equal(r.status, 2)
+assert.match(r.stdout, /`node app\.js` failed:[\s\S]*missing is not defined/, 'verify gates the sync after the check')
+assert.equal(git(seamed, 'rev-parse', 'HEAD'), sHead)
+fs.writeFileSync(seamedApp, "const plugins = []\nplugins.push(() => console.log('mine'))\nfunction start() {\n  // see https://tracker.example.io/42\n  plugins.forEach((p) => p())\n}\nstart()\n")
+r = xtend(seamed, ['sync', '--continue'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /brought in 1 upstream commit \([0-9a-f]+\) changing 1 file\n/)
+assert.match(r.stdout, /1 of those are files you changed, so look at them: app\.js/)
+assert.match(r.stdout, /hosts named in what came in that this copy had not named before: tracker\.example\.io/)
+
+// verify is for syncs: a commit runs the check alone.
+setCfg({ verify: 'node -e "process.exit(1)"' })
+r = xtend(seamed, ['commit', 'a verify that fails'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+
+// status as JSON carries the same facts for an agent to read.
+r = xtend(seamed, ['status', '--json', '--no-fetch'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+const st = JSON.parse(r.stdout)
+assert.deepEqual([st.behind, st.syncOpen, st.root.upstreamBehind, st.yourUpstreamFiles], [0, false, 1, [{ file: 'app.js', seams: 1, temporary: false, generated: false }]])
+assert.deepEqual(st.seams, [{ file: 'app.js', has: 'plugins.forEach((p) => p())', why: 'runs my plugin', held: true }])
+assert.deepEqual([st.lastSync.commits, st.lastSync.yours, st.lastSync.hosts], [1, ['app.js'], ['tracker.example.io']])
+assert.equal(st.commands.verify, 'node -e "process.exit(1)"')
+assert.match(xtend(seamed, ['status', '--now'], dead).stderr, /usage: xtend status/)
+
+// A sync that needs nobody still reports what came in, and a host the copy already names is not news.
+setCfg({ verify: '' })
+assert.equal(xtend(seamed, ['commit', 'no verify'], dead).status, 0)
+commitSup('notes.txt', 'see https://tracker.example.io/43 and https://example.com\n', 'notes')
+r = xtend(seamed, ['sync'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /merged upstream cleanly[\s\S]*brought in 1 upstream commit[\s\S]*none of those are files you changed[\s\S]*no host is named in what came in that this copy had not named before/)
+
+// Dropping a seam ends the watch.
+assert.match(xtend(seamed, ['seam', '--drop', 'app.js', 'nothing'], dead).stderr, /no seam is recorded for that text/)
+r = xtend(seamed, ['seam', '--drop', 'app.js', 'plugins.forEach((p) => p())'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.equal(readSeamed().seams, undefined)
+assert.match(xtend(seamed, ['seams'], dead).stdout, /no seams recorded/)
+assert.match(xtend(seamed, ['status', '--no-fetch'], dead).stdout, /^yours     1 file of upstream's changed: 1 with neither\. Neither:\n {10}- app\.js$/m, 'a changed file with no seam is called out')
+setCfg({ generated: ['*.js'] })
+assert.match(xtend(seamed, ['status', '--no-fetch'], dead).stdout, /^yours     1 file of upstream's changed: 1 generated$/m, 'a file a command rewrites needs no seam')
+
 fs.rmSync(root, { recursive: true, force: true })
 console.log('e2e ok')

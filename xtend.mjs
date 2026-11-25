@@ -49,6 +49,10 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
       [-m "<what changed and why>"]     the body later merges read to keep the change working
       [--temp] [--proof "<command>"]    record it as a temporary fix, as xtend fix does
       [-- <path>...]                    only these files; without it, everything changed
+  xtend status [--json] [--no-fetch]    where this copy stands: behind and ahead, seams, temporary fixes, the last sync
+  xtend seam <file> "<text>" [-m why]   record a line of upstream's that your changes hang on; every check looks for it
+  xtend seam --drop <file> "<text>"     stop tracking one
+  xtend seams                           list them, and say which are gone
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sync --prompt                   merge upstream; print what is left for an agent that resolves it itself
   xtend sync --continue | --abort       finish or drop a sync that --prompt left open
@@ -251,7 +255,21 @@ function command(cmd) {
   const r = spawnSync(cmd, { shell: true, env: withPwd(), encoding: 'utf8', maxBuffer: 64 << 20 })
   return r.status === 0 ? null : `\`${cmd}\` failed:\n${`${r.stdout}\n${r.stderr}`.trim().slice(-4000)}`
 }
-const check = (cfg) => (cfg.check ? command(cfg.check) : null)
+
+// A seam is a line in one of upstream's files that a change of yours hangs on: the call, import or list entry that hooks it in. Upstream can
+// rewrite around it and the merge stays clean, with your feature silently unhooked. So every check looks for each seam before it runs anything.
+const seamHeld = (s) => fs.existsSync(s.file) && fs.readFileSync(s.file, 'utf8').includes(s.has)
+const seamsGone = (cfg) => (cfg.seams || []).filter((s) => !seamHeld(s))
+const seamLine = (s) => `${s.file} no longer has \`${s.has}\`${s.why ? `, which ${s.why}` : ''}`
+function check(cfg) {
+  const gone = seamsGone(cfg)
+  if (gone.length) return `${gone.length === 1 ? 'a seam is' : 'seams are'} gone:\n${gone.map((s) => `- ${seamLine(s)}`).join('\n')}\nPut each back where upstream's new code calls for it. If one is no longer needed, drop it with \`xtend seam --drop <file> "<text>"\`.`
+  return cfg.check ? command(cfg.check) : null
+}
+// prepare runs once a merge is in the tree, before anything is checked: new upstream code often needs its dependencies installed first.
+// verify runs after the check, on a sync only. It is the place for what is too slow to run on every commit, such as a typecheck or a build.
+const prepare = (cfg) => (cfg.prepare ? command(cfg.prepare) : null)
+const checkMerge = (cfg) => prepare(cfg) || check(cfg) || (cfg.verify ? command(cfg.verify) : null)
 
 // rerere replays resolutions it recorded before, but leaves those files unmerged. Stage them, so only the rest goes to the agent.
 // If the agent later has to change a replayed file, that memory was wrong. git can't reliably forget one file's resolution, so wrong() drops them all.
@@ -317,6 +335,9 @@ A customization whose message has an Xtend-Temporary line is a stopgap for somet
 
 ## Incoming upstream changes
 {{incoming}}
+
+## Seams (lines in upstream's files that the customizations hang on; each must still be there when you finish)
+{{seams}}
 
 ## What is wrong right now
 {{problem}}
@@ -612,6 +633,8 @@ function temp(cfg, args) {
   if (!tryGit('rev-parse', '--verify', '-q', `upstream/${cfg.branch}`)) throw new Fail('upstream has not been fetched yet. Run `xtend sync` first.')
   if (args.length) {
     requireClean()
+    const unready = prepare(cfg)
+    if (unready) throw new Fail(unready)
     retireTemps(cfg, tempFixes(cfg))
     pushIfFork()
   }
@@ -655,6 +678,140 @@ function commitChange(cfg, args) {
   pushIfFork()
 }
 
+// --- seams, news and status -------------------------------------------
+
+const seamList = (cfg) => (cfg.seams || []).map((s) => `- ${s.file}: \`${s.has}\`${s.why ? ` (${s.why})` : ''}`).join('\n') || '(none recorded)'
+
+function seam(cfg, args) {
+  const drop = args[0] === '--drop'
+  if (drop) args = args.slice(1)
+  const at = args.indexOf('-m')
+  const why = at >= 0 ? args.splice(at, 2)[1] || '' : ''
+  const [file, has] = args
+  if (args.length !== 2 || !file || !has || (drop && why)) throw new Fail('usage: xtend seam <file> "<text>" [-m "<what it hooks in>"] | xtend seam --drop <file> "<text>"')
+  const data = readJson(CONFIG)
+  const others = (data.seams || []).filter((s) => !(s.file === file && s.has === has))
+  if (drop && others.length === (data.seams || []).length) throw new Fail(`no seam is recorded for that text in ${file}. \`xtend seams\` lists them.`)
+  // A seam recorded while it is not there would fail every check from the first one.
+  if (!drop && !seamHeld({ file, has })) throw new Fail(`${file} does not have that text, so there is nothing to hold on to. Give the exact text, as it stands in the file.`)
+  data.seams = drop ? others : [...others, { file, has, ...(why ? { why } : {}) }]
+  if (!data.seams.length) delete data.seams
+  fs.writeFileSync(CONFIG, JSON.stringify(data, null, 2) + '\n')
+  log(`${drop ? 'dropped' : 'recorded'} the seam in ${file}. It is in ${CONFIG}; \`xtend commit\` takes it along with your change.`)
+}
+
+function seams(cfg, args) {
+  if (args.length) throw new Fail('usage: xtend seams')
+  if (!(cfg.seams || []).length) return console.log('no seams recorded. Record one with: xtend seam <file> "<text>" -m "<what it hooks in>"')
+  for (const s of cfg.seams) console.log(`${seamHeld(s) ? 'ok  ' : 'GONE'}  ${s.file}: ${s.has}${s.why ? `  (${s.why})` : ''}`)
+  if (seamsGone(cfg).length) process.exitCode = 2
+}
+
+// The files of upstream's that this copy has changed: where a merge can collide, and where seams live.
+const yourUpstreamFiles = (base) => git('diff', '--name-only', '--diff-filter=M', base, 'HEAD', '--', ...MINE).split('\n').filter(Boolean)
+
+// What a sync is about to bring in, worked out before the merge: how much, which of it lands in files you changed, and which
+// hosts its added lines name that nothing in this copy named before. The last is a prompt to look, not a verdict.
+function incomingNews(theirs, touched) {
+  const base = git('merge-base', 'HEAD', theirs)
+  const yours = new Set(yourUpstreamFiles(base))
+  let hosts = null
+  const diff = run('git', ['diff', '-U0', '-G', 'https?://', `${base}..${theirs}`, '--', '.', ':!*lock*', ':!*.lock'])
+  if (diff.ok) {
+    const added = diff.out.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).join('\n')
+    const named = [...new Set([...added.matchAll(/https?:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})/gi)].map((m) => m[1].toLowerCase()))]
+    hosts = named.filter((h) => !/(^|\.)example\.(com|org|net)$|^localhost$/.test(h)).slice(0, 200).filter((h) => !run('git', ['grep', '-qiF', h, 'HEAD']).ok).sort()
+  }
+  return {
+    at: new Date().toISOString().slice(0, 10),
+    to: git('rev-parse', '--short', theirs),
+    commits: Number(git('rev-list', '--count', '--no-merges', `HEAD..${theirs}`)),
+    files: touched.length,
+    yours: touched.filter((f) => yours.has(f)),
+    hosts,
+  }
+}
+
+const lastSync = () => git('rev-parse', '--git-path', 'xtend-last-sync.json')
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : /(s|x|ch|sh)$/.test(word) ? 'es' : 's'}`
+
+function newsLines(news) {
+  return [
+    `brought in ${plural(news.commits, 'upstream commit')} (${news.to}) changing ${plural(news.files, 'file')}`,
+    news.yours.length ? `${news.yours.length} of those are files you changed, so look at them: ${news.yours.join(', ')}` : 'none of those are files you changed',
+    news.hosts === null ? null : news.hosts.length ? `hosts named in what came in that this copy had not named before: ${news.hosts.join(', ')}` : 'no host is named in what came in that this copy had not named before',
+  ].filter(Boolean)
+}
+
+function reportNews(news) {
+  fs.writeFileSync(lastSync(), JSON.stringify(news))
+  for (const line of newsLines(news)) log(line)
+}
+
+const repoUrl = (src) => (/^[\w.-]+\/[\w.-]+$/.test(src) && !fs.existsSync(src) ? `https://github.com/${src}` : src)
+
+// One call for an agent arriving cold: everything it would otherwise piece together from a dozen git commands.
+function status(cfg, args) {
+  const json = args.includes('--json')
+  const fetch = !args.includes('--no-fetch')
+  if (args.some((a) => a !== '--json' && a !== '--no-fetch')) throw new Fail('usage: xtend status [--json] [--no-fetch]')
+  if (!tryGit('remote', 'get-url', 'upstream')) git('remote', 'add', 'upstream', cfg.upstream)
+  const theirs = `upstream/${cfg.branch}`
+  const notes = []
+  if (fetch && !run('git', ['fetch', '-q', 'upstream', cfg.branch]).ok) notes.push('could not reach upstream, so this is as of the last fetch')
+  if (!tryGit('rev-parse', '--verify', '-q', theirs)) throw new Fail('upstream has not been fetched yet. Run `xtend sync` first.')
+  const count = (range) => Number(git('rev-list', '--count', range))
+  const base = git('merge-base', 'HEAD', theirs)
+  // root is where upstream itself comes from, when upstream is someone else's fork. A fork can fall behind its source without a word.
+  let root = null
+  if (cfg.root) {
+    const ref = 'refs/xtend/root'
+    if (fetch && !run('git', ['fetch', '-q', repoUrl(cfg.root), `+${cfg.rootBranch || cfg.branch}:${ref}`]).ok) notes.push(`could not reach ${cfg.root}, so its numbers are as of the last fetch`)
+    if (tryGit('rev-parse', '--verify', '-q', ref)) root = { repo: cfg.root, upstreamBehind: count(`${theirs}..${ref}`), newest: git('log', '-1', '--format=%cs', ref) }
+  }
+  const fixes = tempFixes(cfg)
+  // "generated" in the config names files a command rewrites (a route tree, a message catalog), with * for any run of characters.
+  // A merge that disturbs one is settled by running the command again, so such a file needs no seam.
+  const generated = (cfg.generated || []).map((g) => new RegExp(`^${String(g).split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`))
+  const out = {
+    upstream: cfg.upstream,
+    branch: cfg.branch,
+    behind: count(`HEAD..${theirs}`),
+    ahead: count(`${theirs}..HEAD`),
+    root,
+    syncOpen: fs.existsSync(syncState()),
+    uncommitted: git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean).length,
+    yourUpstreamFiles: yourUpstreamFiles(base).map((file) => ({
+      file,
+      seams: (cfg.seams || []).filter((s) => s.file === file).length,
+      temporary: fixes.some((f) => f.files.includes(file)),
+      generated: generated.some((g) => g.test(file)),
+    })),
+    seams: (cfg.seams || []).map((s) => ({ ...s, held: seamHeld(s) })),
+    temporaryFixes: fixes.map((f) => ({ commit: f.sha.slice(0, 10), what: f.subject, proof: f.proof || null, files: f.files })),
+    commands: { prepare: cfg.prepare || null, check: cfg.check || null, verify: cfg.verify || null },
+    lastSync: fs.existsSync(lastSync()) ? readJson(lastSync()) : null,
+    notes,
+  }
+  if (json) return console.log(JSON.stringify(out, null, 2))
+  const row = (name, text) => console.log(`${name.padEnd(10)}${text}`)
+  row('upstream', `${out.upstream} (${out.branch}): this copy is ${out.behind} behind and ${out.ahead} ahead${out.behind ? '. `xtend sync` brings it in' : ''}`)
+  if (root) row('root', `${root.repo}: upstream is ${root.upstreamBehind} behind it (its newest commit is from ${root.newest})`)
+  if (out.syncOpen) row('sync', 'one is open. Finish it with `xtend sync --continue`, or drop it with `xtend sync --abort`')
+  if (out.uncommitted) row('tree', `${plural(out.uncommitted, 'uncommitted file')}`)
+  // A changed file of upstream's with neither a seam nor a temporary fix is one a merge can quietly undo: the list to record seams from.
+  const bare = out.yourUpstreamFiles.filter((f) => !f.seams && !f.temporary && !f.generated)
+  const sorts = [[out.yourUpstreamFiles.filter((f) => f.seams).length, 'with a seam'], [out.yourUpstreamFiles.filter((f) => f.temporary).length, 'in a temporary fix'], [out.yourUpstreamFiles.filter((f) => f.generated && !f.seams && !f.temporary).length, 'generated'], [bare.length, 'with neither']]
+  row('yours', out.yourUpstreamFiles.length ? `${plural(out.yourUpstreamFiles.length, 'file')} of upstream's changed: ${sorts.filter(([n]) => n).map(([n, what]) => `${n} ${what}`).join(', ')}${bare.length ? `. Neither:\n${bare.map((f) => `          - ${f.file}`).join('\n')}` : ''}` : "none of upstream's files changed")
+  const gone = out.seams.filter((s) => !s.held)
+  row('seams', !out.seams.length ? 'none recorded' : gone.length ? `${gone.length} of ${out.seams.length} GONE:\n${gone.map((s) => `          - ${seamLine(s)}`).join('\n')}` : `${out.seams.length} held`)
+  row('temporary', fixes.length ? `${plural(fixes.length, 'fix')} carried: ${fixes.map((f) => f.subject).join('; ')}` : 'no fixes carried')
+  row('commands', Object.entries(out.commands).map(([k, v]) => `${k}: ${v || 'none'}`).join(' | '))
+  row('last sync', out.lastSync ? `${out.lastSync.at}: ${newsLines(out.lastSync).join('; ')}` : 'none recorded on this device')
+  for (const note of notes) row('note', note)
+  if (gone.length || out.syncOpen) process.exitCode = 2
+}
+
 // --- sync --------------------------------------------------------------
 
 function sync(cfg, args = []) {
@@ -675,6 +832,7 @@ function sync(cfg, args = []) {
   const before = git('rev-parse', 'HEAD')
   const temps = tempFixes(cfg)
   const touched = git('diff', '--name-only', `HEAD...${theirs}`).split('\n').filter(Boolean)
+  const news = incomingNews(theirs, touched)
   const incoming = git('log', '--no-merges', '--format=- %s', `HEAD..${theirs}`)
   const ours = git('log', '--no-merges', '--format=- %B', `${theirs}..HEAD`)
   run('git', ['merge', '--no-ff', '--no-commit', theirs])
@@ -689,7 +847,7 @@ function sync(cfg, args = []) {
   const verify = () => {
     if (!fs.existsSync(git('rev-parse', '--git-path', 'MERGE_HEAD'))) return 'the merge was committed or aborted; leave that to xtend'
     git('add', '-A')
-    return markersLeft(conflicted) || check(cfg)
+    return markersLeft(conflicted) || checkMerge(cfg)
   }
 
   // A conflict in a file that only proven temporary fixes changed is upstream reaching the same code. Take upstream's side, and keep it
@@ -704,7 +862,7 @@ function sync(cfg, args = []) {
     git('add', '--', ...files)
     const rest = open.split('\n').filter((f) => !files.includes(f)).join('\n')
     const proofs = [...new Set(temps.filter((t) => t.proof && t.files.some((f) => files.includes(f))).map((t) => t.proof))]
-    const trouble = proofs.map(command).find(Boolean) || (rest ? null : verify())
+    const trouble = prepare(cfg) || proofs.map(command).find(Boolean) || (rest ? null : verify())
     if (trouble) return git('checkout', '-m', '--', ...files)
     open = rest
     yielded = files
@@ -719,8 +877,8 @@ function sync(cfg, args = []) {
     if (problem && flag === '--prompt') {
       // With no conflicts the index is exactly what the merge produced, so a fix made from here on can be told apart from the merge.
       const tree = conflicted ? null : git('write-tree')
-      fs.writeFileSync(syncState(), JSON.stringify({ theirs, conflicted, touched, tree, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
-      console.log(promptFor(cfg, 'sync', { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem }))
+      fs.writeFileSync(syncState(), JSON.stringify({ theirs, conflicted, touched, tree, news, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
+      console.log(promptFor(cfg, 'sync', { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem, seams: seamList(cfg) }))
       log('the merge is open. Do what the prompt says, then run `xtend sync --continue`. `xtend sync --abort` puts everything back.')
       if (tree) log('If upstream itself is broken, fix it and finish with `xtend sync --continue --temp "<what you fixed>" --proof "<command>"`. Your fix is then a temporary one, dropped when upstream no longer needs it.')
       process.exitCode = 2
@@ -754,6 +912,7 @@ function sync(cfg, args = []) {
     bad.length && 'git forgot its old resolutions, because the agent had to change them',
   ].filter(Boolean).join('; '))
   retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
+  reportNews(news)
   pushIfFork()
 }
 
@@ -761,7 +920,7 @@ function resumeSync(cfg, flag, asTemp = null) {
   const stopgap = asTemp || []
   const file = syncState()
   if (!fs.existsSync(file)) throw new Fail('no sync is waiting. Start one with `xtend sync --prompt`.')
-  const { theirs, conflicted, reused, touched = [], tree = null } = readJson(file)
+  const { theirs, conflicted, reused, touched = [], tree = null, news = null } = readJson(file)
   const proofAt = stopgap.indexOf('--proof')
   const proof = proofAt >= 0 ? stopgap.splice(proofAt, 2)[1] || '' : ''
   const request = stopgap.join(' ').trim()
@@ -778,7 +937,7 @@ function resumeSync(cfg, flag, asTemp = null) {
     throw new Fail('the merge was committed or aborted outside xtend, so there is nothing to continue. Run `xtend sync` again.')
   }
   git('add', '-A')
-  const problem = markersLeft(conflicted) || (proof && command(proof)) || check(cfg)
+  const problem = markersLeft(conflicted) || prepare(cfg) || (proof && command(proof)) || check(cfg) || (cfg.verify ? command(cfg.verify) : null)
   if (problem) {
     console.log(problem)
     log('not finished. Fix that, then run `xtend sync --continue` again, or `xtend sync --abort`.')
@@ -806,11 +965,12 @@ function resumeSync(cfg, flag, asTemp = null) {
   const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f))
   log(['merged upstream', kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`, fixed.length && `resolved by hand: ${fixed.join(', ')}`].filter(Boolean).join('; '))
   retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
+  if (news) reportNews(news)
   pushIfFork()
 }
 
 function resolveMerge(cfg, { ours, incoming, problem }, verify) {
-  const vars = { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem }
+  const vars = { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem, seams: seamList(cfg) }
   return agentUntil(cfg, 'sync', vars, verify).problem
 }
 
@@ -1185,6 +1345,9 @@ try {
   else if (verb === 'fix') fix(loadConfig(), rest)
   else if (verb === 'temp') temp(loadConfig(), rest)
   else if (verb === 'sync') sync(loadConfig(), rest)
+  else if (verb === 'status') status(loadConfig(), rest)
+  else if (verb === 'seam') seam(loadConfig(), rest)
+  else if (verb === 'seams') seams(loadConfig(), rest)
   else if (verb === 'share') share(loadConfig(), rest)
   else if (verb === 'sheet') writeSheet(loadConfig(false), rest)
   else if (verb === 'update' && !rest.length) (loadConfig(), update())
