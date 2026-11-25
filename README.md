@@ -247,6 +247,18 @@ Status sorts the files of upstream's that you changed: those with a seam, those 
 
 If your upstream is itself someone's fork, set `"root": "owner/repo"` in the config and status also says how far upstream trails it.
 
+## When your upstream is itself a fork
+
+You may follow a fork because of what it adds or strips out, while the fork follows the original project on its own schedule, or stops. Name the original as the root and `xtend status` says how far each of you trails it:
+
+```json
+{ "root": "owner/original", "syncRoot": true }
+```
+
+`xtend sync --root` merges the root into your copy directly, with the same prepare, check, verify, seams and prompt as any sync. With `"syncRoot": true` a plain `xtend sync`, and the daily one, takes upstream first and then the root. Your own changes are counted as what you have beyond both, so the root's commits never show up as yours in `status`, `temp` or `share`.
+
+Merging the root brings in what your upstream chose to leave out. Your check is what stands between that and your copy, so make it look for the things you followed the fork to avoid.
+
 ## When your agent is already in the repo
 
 An agent working inside a session often cannot start a second agent CLI. It can still do every step itself:
@@ -270,6 +282,14 @@ The Action installs your agent and needs that agent's key once, for example:
 ```sh
 gh secret set ANTHROPIC_API_KEY -R you/repo
 ```
+
+If your `prepare`, `check` or `verify` need more than a bare runner has, give the Action its own steps under `daily` in `.xtend/config.json`, then run `xtend daily on` again. A string is a command; an object is a step as GitHub writes it:
+
+```json
+{ "daily": { "setup": [{ "uses": "actions/setup-node@v4", "with": { "node-version": "22" } }, "npm ci"] } }
+```
+
+**With no agent at all.** `xtend agent none` needs no install and no key. Most days upstream merges cleanly and passes your checks, and those syncs land by themselves. When one does not, xtend changes nothing, exits 3 and says what stood in the way; as an Action it opens an issue, "xtend: the daily sync needs a hand", and adds to that issue on later days instead of opening more. Any agent working in the repo can then finish it with `xtend sync --prompt`. The same works from cron on your own machine.
 
 A failed sync exits non-zero, so the run fails and GitHub emails you. GitHub's default `GITHUB_TOKEN` can't push upstream commits that touch `.github/workflows/`. When that happens, run `xtend sync` locally, or give the workflow a token with `workflow` scope.
 

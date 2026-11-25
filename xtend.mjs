@@ -54,6 +54,7 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
   xtend seam --drop <file> "<text>"     stop tracking one
   xtend seams                           list them, and say which are gone
   xtend sync                            merge upstream; your agent resolves conflicts
+  xtend sync --root                     merge the root instead: the repo your upstream was itself forked from
   xtend sync --prompt                   merge upstream; print what is left for an agent that resolves it itself
   xtend sync --continue | --abort       finish or drop a sync that --prompt left open
   xtend sheet                           (re)write the ref sheet agents read before editing
@@ -61,6 +62,7 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
   xtend share [--json]                  what upstream accepts, and which of your changes you could offer
   xtend share <n>... [--yes]            offer those changes upstream, the way the owner asks for them
   xtend agent [preset or command]       show or change the agent, e.g. \`xtend agent codex -m gpt-6\`
+  xtend agent none                      no agent: a clean sync lands by itself, any other changes nothing and says so
   xtend daily [on | off]                show, add or remove the GitHub Action that runs xtend sync every day
   xtend update                          refresh the copy of xtend this repo carries in .xtend/, for the daily Action
   xtend config [--json]                 each step's agent, prompt and commands, and which file set them
@@ -233,8 +235,11 @@ function promptFor(cfg, step, vars) {
   return render(template, vars, source.file ? source.value : `the built-in ${step} prompt`) + (add ? `\n\n${add.value}` : '')
 }
 
+const NO_AGENT = 'none'
+
 function agentUntil(cfg, step, vars, verify) {
   const { agent, after, tries } = cfg.steps[step]
+  if (agent.value === NO_AGENT) return { problem: `no agent is set for this step (agent: ${NO_AGENT}). Do it yourself: edit the files, then record the change with \`xtend commit\`.` }
   const prompt = promptFor(cfg, step, vars)
   let problem = null
   for (let i = 1; i <= tries.value; i++) {
@@ -558,10 +563,18 @@ function withTrailers(body, trailers) {
   return `${body}${isBlock ? '\n' : '\n\n'}${trailers}`
 }
 
+const ROOT_REF = 'refs/xtend/root'
+const hasRef = (ref) => tryGit('rev-parse', '--verify', '-q', ref)
+const repoUrl = (src) => (/^[\w.-]+\/[\w.-]+$/.test(src) && !fs.existsSync(src) ? `https://github.com/${src}` : src)
+const fetchRoot = (cfg) => run('git', ['fetch', '-q', repoUrl(cfg.root), `+${cfg.rootBranch || cfg.branch}:${ROOT_REF}`]).ok
+// What this copy takes in: upstream, and the root once it has been fetched. A copy can merge from both, so its own changes are
+// whatever a commit has beyond the two of them, never "ahead of upstream" alone.
+const sources = (cfg) => [`upstream/${cfg.branch}`, ...(cfg.root ? [ROOT_REF] : [])].filter(hasRef)
+const ownRange = (cfg, tip = 'HEAD') => [tip, '--not', ...sources(cfg)]
+
 function tempFixes(cfg) {
-  const theirs = `upstream/${cfg.branch}`
   const trailer = (key) => `%(trailers:key=${key},valueonly,separator=%x20)`
-  const rows = git('log', '--no-merges', '--reverse', `--format=%H%x1f%s%x1f${trailer(TEMP)}%x1f${trailer(PROOF)}%x1f${trailer(RETIRES)}%x1f${trailer(REPROVES)}%x1e`, `${theirs}..HEAD`)
+  const rows = git('log', '--no-merges', '--reverse', `--format=%H%x1f%s%x1f${trailer(TEMP)}%x1f${trailer(PROOF)}%x1f${trailer(RETIRES)}%x1f${trailer(REPROVES)}%x1e`, ...ownRange(cfg))
     .split('\x1e').map((r) => r.trim()).filter(Boolean).map((r) => r.split('\x1f').map((c) => c.trim()))
   const retired = new Set(rows.flatMap((r) => (r[4] || '').split(/\s+/).filter(Boolean)))
   // A later `xtend temp --proof` replaces the proof the fix was committed with.
@@ -577,7 +590,7 @@ function tempFixes(cfg) {
   return live
 }
 
-const sameAsUpstream = (cfg, files) => run('git', ['diff', '--quiet', `upstream/${cfg.branch}`, 'HEAD', '--', ...files]).ok
+const sameAsUpstream = (cfg, files) => sources(cfg).some((ref) => run('git', ['diff', '--quiet', ref, 'HEAD', '--', ...files]).ok)
 
 // Ends the fixes that are no longer needed. One whose files now match upstream is over. One with a proof is reverted, and stays reverted
 // only if its proof and the check pass without it. Without a proof xtend cannot tell, so the fix stays until its files match upstream.
@@ -707,14 +720,20 @@ function seams(cfg, args) {
   if (seamsGone(cfg).length) process.exitCode = 2
 }
 
-// The files of upstream's that this copy has changed: where a merge can collide, and where seams live.
-const yourUpstreamFiles = (base) => git('diff', '--name-only', '--diff-filter=M', base, 'HEAD', '--', ...MINE).split('\n').filter(Boolean)
+// The files of upstream's that this copy has changed: where a merge can collide, and where seams live. Worked out from this copy's own
+// commits, since with two sources there is no single commit to diff against. A file counts while it differs from every source that has it.
+function yourUpstreamFiles(cfg) {
+  const touched = [...new Set(git('log', '--no-merges', '--format=', '--name-only', ...ownRange(cfg), '--', ...MINE).split('\n').filter(Boolean))].filter((f) => fs.existsSync(f))
+  if (!touched.length) return []
+  const views = sources(cfg).map((ref) => new Map(git('diff', '--name-status', '--no-renames', ref, 'HEAD', '--', ...touched).split('\n').filter(Boolean).map((l) => l.split('\t').reverse())))
+  return touched.filter((f) => views.some((v) => v.get(f) === 'M') && views.every((v) => v.has(f))).sort()
+}
 
 // What a sync is about to bring in, worked out before the merge: how much, which of it lands in files you changed, and which
 // hosts its added lines name that nothing in this copy named before. The last is a prompt to look, not a verdict.
-function incomingNews(theirs, touched) {
+function incomingNews(cfg, theirs, touched) {
   const base = git('merge-base', 'HEAD', theirs)
-  const yours = new Set(yourUpstreamFiles(base))
+  const yours = new Set(yourUpstreamFiles(cfg))
   let hosts = null
   const diff = run('git', ['diff', '-U0', '-G', 'https?://', `${base}..${theirs}`, '--', '.', ':!*lock*', ':!*.lock'])
   if (diff.ok) {
@@ -748,8 +767,6 @@ function reportNews(news) {
   for (const line of newsLines(news)) log(line)
 }
 
-const repoUrl = (src) => (/^[\w.-]+\/[\w.-]+$/.test(src) && !fs.existsSync(src) ? `https://github.com/${src}` : src)
-
 // One call for an agent arriving cold: everything it would otherwise piece together from a dozen git commands.
 function status(cfg, args) {
   const json = args.includes('--json')
@@ -761,13 +778,11 @@ function status(cfg, args) {
   if (fetch && !run('git', ['fetch', '-q', 'upstream', cfg.branch]).ok) notes.push('could not reach upstream, so this is as of the last fetch')
   if (!tryGit('rev-parse', '--verify', '-q', theirs)) throw new Fail('upstream has not been fetched yet. Run `xtend sync` first.')
   const count = (range) => Number(git('rev-list', '--count', range))
-  const base = git('merge-base', 'HEAD', theirs)
   // root is where upstream itself comes from, when upstream is someone else's fork. A fork can fall behind its source without a word.
   let root = null
   if (cfg.root) {
-    const ref = 'refs/xtend/root'
-    if (fetch && !run('git', ['fetch', '-q', repoUrl(cfg.root), `+${cfg.rootBranch || cfg.branch}:${ref}`]).ok) notes.push(`could not reach ${cfg.root}, so its numbers are as of the last fetch`)
-    if (tryGit('rev-parse', '--verify', '-q', ref)) root = { repo: cfg.root, upstreamBehind: count(`${theirs}..${ref}`), newest: git('log', '-1', '--format=%cs', ref) }
+    if (fetch && !fetchRoot(cfg)) notes.push(`could not reach ${cfg.root}, so its numbers are as of the last fetch`)
+    if (hasRef(ROOT_REF)) root = { repo: cfg.root, upstreamBehind: count(`${theirs}..${ROOT_REF}`), behind: count(`HEAD..${ROOT_REF}`), newest: git('log', '-1', '--format=%cs', ROOT_REF), synced: !!cfg.syncRoot }
   }
   const fixes = tempFixes(cfg)
   // "generated" in the config names files a command rewrites (a route tree, a message catalog), with * for any run of characters.
@@ -777,11 +792,11 @@ function status(cfg, args) {
     upstream: cfg.upstream,
     branch: cfg.branch,
     behind: count(`HEAD..${theirs}`),
-    ahead: count(`${theirs}..HEAD`),
+    ahead: Number(git('rev-list', '--count', ...ownRange(cfg))),
     root,
     syncOpen: fs.existsSync(syncState()),
     uncommitted: git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean).length,
-    yourUpstreamFiles: yourUpstreamFiles(base).map((file) => ({
+    yourUpstreamFiles: yourUpstreamFiles(cfg).map((file) => ({
       file,
       seams: (cfg.seams || []).filter((s) => s.file === file).length,
       temporary: fixes.some((f) => f.files.includes(file)),
@@ -795,8 +810,8 @@ function status(cfg, args) {
   }
   if (json) return console.log(JSON.stringify(out, null, 2))
   const row = (name, text) => console.log(`${name.padEnd(10)}${text}`)
-  row('upstream', `${out.upstream} (${out.branch}): this copy is ${out.behind} behind and ${out.ahead} ahead${out.behind ? '. `xtend sync` brings it in' : ''}`)
-  if (root) row('root', `${root.repo}: upstream is ${root.upstreamBehind} behind it (its newest commit is from ${root.newest})`)
+  row('upstream', `${out.upstream} (${out.branch}): this copy is ${out.behind} behind, with ${plural(out.ahead, 'commit')} of its own${out.behind ? '. `xtend sync` brings it in' : ''}`)
+  if (root) row('root', `${root.repo}: upstream is ${root.upstreamBehind} behind it and this copy ${root.behind} (its newest commit is from ${root.newest})${root.behind ? `. ${root.synced ? '`xtend sync` brings it in too' : '`xtend sync --root` merges it directly'}` : ''}`)
   if (out.syncOpen) row('sync', 'one is open. Finish it with `xtend sync --continue`, or drop it with `xtend sync --abort`')
   if (out.uncommitted) row('tree', `${plural(out.uncommitted, 'uncommitted file')}`)
   // A changed file of upstream's with neither a seam nor a temporary fix is one a merge can quietly undo: the list to record seams from.
@@ -815,26 +830,58 @@ function status(cfg, args) {
 // --- sync --------------------------------------------------------------
 
 function sync(cfg, args = []) {
-  const [flag = '', ...more] = args
-  const usage = 'usage: xtend sync [--prompt | --continue [--temp "<what you fixed>" [--proof "<command>"]] | --abort]'
+  const usage = 'usage: xtend sync [--root] [--prompt] | --continue [--temp "<what you fixed>" [--proof "<command>"]] | --abort'
+  const onlyRoot = args.includes('--root')
+  const [flag = '', ...more] = args.filter((a) => a !== '--root')
   if (flag && !['--prompt', '--continue', '--abort'].includes(flag)) throw new Fail(usage)
   if (more.length && (flag !== '--continue' || more[0] !== '--temp')) throw new Fail(usage)
+  if (onlyRoot && (flag === '--continue' || flag === '--abort')) throw new Fail(usage)
   if (flag === '--continue' || flag === '--abort') return resumeSync(cfg, flag, more.length ? more.slice(1) : null)
   requireClean()
+  if (onlyRoot && !cfg.root) throw new Fail(`this copy has no root. Set "root": "owner/repo" in ${CONFIG}: the repo your upstream was itself forked from.`)
   if (!tryGit('remote', 'get-url', 'upstream')) git('remote', 'add', 'upstream', cfg.upstream)
-  git('fetch', '-q', 'upstream', cfg.branch)
-  const theirs = `upstream/${cfg.branch}`
-  if (tryGit('merge-base', '--is-ancestor', theirs, 'HEAD')) {
-    log('already up to date')
-    return pushIfFork()
+  const upstream = `upstream/${cfg.branch}`
+  if (!onlyRoot || !hasRef(upstream)) git('fetch', '-q', 'upstream', cfg.branch)
+  // Upstream first, then the root where the config asks for both. One merge at a time: a merge left open ends the run, and the next run goes on.
+  const from = onlyRoot ? [] : [{ theirs: upstream, label: upstream, what: 'upstream' }]
+  if (onlyRoot || (cfg.syncRoot && cfg.root)) {
+    if (fetchRoot(cfg)) from.push({ theirs: ROOT_REF, label: `root ${cfg.root}`, what: `the root, ${cfg.root},` })
+    else if (onlyRoot) throw new Fail(`could not fetch ${cfg.rootBranch || cfg.branch} from ${cfg.root}`)
+    else log(`could not reach ${cfg.root}, so only upstream is synced this time`)
   }
+  let merged = 0
+  for (const source of from) {
+    if (tryGit('merge-base', '--is-ancestor', source.theirs, 'HEAD')) continue
+    if (!syncFrom(cfg, flag, source)) return
+    merged++
+  }
+  if (merged) return
+  log('already up to date')
+  pushIfFork()
+}
 
+// With no agent to ask, a sync that needs one changes nothing and says so where someone will see it: an issue, when it runs as an Action.
+function needsHand(label, problem) {
+  const text = `xtend could not finish syncing ${label} by itself, and changed nothing.\n\n${problem}\n\nAn agent working in the repo can finish it: run \`xtend sync --prompt\`, do what it prints, then \`xtend sync --continue\`.`
+  log(text)
+  process.exitCode = 3
+  if (!process.env.GITHUB_ACTIONS || !hasGh()) return
+  const title = 'xtend: the daily sync needs a hand'
+  const listed = gh(['issue', 'list', '--state', 'open', '--search', `in:title "${title}"`, '--json', 'number'])
+  let open
+  try { open = JSON.parse(listed.out)[0]?.number } catch {}
+  const r = open ? gh(['issue', 'comment', String(open), '--body', text]) : gh(['issue', 'create', '--title', title, '--body', text])
+  if (!r.ok) log(`could not open an issue about it: ${r.err}`)
+}
+
+// Merges one source. True when it is merged and pushed; false when it is left for someone (an open merge, or nothing changed and a report).
+function syncFrom(cfg, flag, { theirs, label, what }) {
   const before = git('rev-parse', 'HEAD')
   const temps = tempFixes(cfg)
   const touched = git('diff', '--name-only', `HEAD...${theirs}`).split('\n').filter(Boolean)
-  const news = incomingNews(theirs, touched)
+  const news = incomingNews(cfg, theirs, touched)
   const incoming = git('log', '--no-merges', '--format=- %s', `HEAD..${theirs}`)
-  const ours = git('log', '--no-merges', '--format=- %B', `${theirs}..HEAD`)
+  const ours = git('log', '--no-merges', '--format=- %B', ...ownRange(cfg))
   run('git', ['merge', '--no-ff', '--no-commit', theirs])
   const conflicted = git('diff', '--name-only', '--diff-filter=U')
   const replayedNow = replay(conflicted)
@@ -853,7 +900,7 @@ function sync(cfg, args = []) {
   // A conflict in a file that only proven temporary fixes changed is upstream reaching the same code. Take upstream's side, and keep it
   // if every proof and the check pass; otherwise put the conflict back for the agent.
   const stopgapOnly = (f) => {
-    const by = git('log', '--no-merges', '--format=%H', `${theirs}..${before}`, '--', f).split('\n').filter((sha) => sha && !temps.settled.has(sha))
+    const by = git('log', '--no-merges', '--format=%H', ...ownRange(cfg, before), '--', f).split('\n').filter((sha) => sha && !temps.settled.has(sha))
     return by.length > 0 && by.every((sha) => temps.find((t) => t.sha === sha)?.proof)
   }
   const yieldStopgaps = () => {
@@ -877,12 +924,18 @@ function sync(cfg, args = []) {
     if (problem && flag === '--prompt') {
       // With no conflicts the index is exactly what the merge produced, so a fix made from here on can be told apart from the merge.
       const tree = conflicted ? null : git('write-tree')
-      fs.writeFileSync(syncState(), JSON.stringify({ theirs, conflicted, touched, tree, news, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
+      fs.writeFileSync(syncState(), JSON.stringify({ theirs, label, conflicted, touched, tree, news, reused: Object.fromEntries(reused.map((f) => [f, fileHash(f)])) }))
       console.log(promptFor(cfg, 'sync', { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem, seams: seamList(cfg) }))
       log('the merge is open. Do what the prompt says, then run `xtend sync --continue`. `xtend sync --abort` puts everything back.')
       if (tree) log('If upstream itself is broken, fix it and finish with `xtend sync --continue --temp "<what you fixed>" --proof "<command>"`. Your fix is then a temporary one, dropped when upstream no longer needs it.')
       process.exitCode = 2
-      return
+      return false
+    }
+    if (problem && cfg.steps.sync.agent.value === NO_AGENT) {
+      git('reset', '-q', '--hard', before)
+      git('clean', '-qfd')
+      needsHand(label, problem)
+      return false
     }
     if (problem) {
       agentRan = true
@@ -890,7 +943,7 @@ function sync(cfg, args = []) {
     }
     if (!problem) {
       bad = wrong()
-      const c = run('git', ['commit', '-q', '-m', `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`])
+      const c = run('git', ['commit', '-q', '-m', `xtend: sync ${label} (${git('rev-parse', '--short', theirs)})`])
       if (!c.ok) problem = `git commit failed:\n${c.err || c.out}`
     }
   } catch (e) {
@@ -904,7 +957,7 @@ function sync(cfg, args = []) {
   const kept = reused.filter((f) => !bad.includes(f))
   const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f) && !yielded.includes(f))
   log([
-    conflicted || agentRan ? 'merged upstream' : 'merged upstream cleanly',
+    conflicted || agentRan ? `merged ${what}` : `merged ${what} cleanly`,
     kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`,
     yielded.length && `took upstream's code where only a temporary fix had been: ${yielded.join(', ')}`,
     fixed.length && `agent resolved: ${fixed.join(', ')}`,
@@ -914,13 +967,14 @@ function sync(cfg, args = []) {
   retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
   reportNews(news)
   pushIfFork()
+  return true
 }
 
 function resumeSync(cfg, flag, asTemp = null) {
   const stopgap = asTemp || []
   const file = syncState()
   if (!fs.existsSync(file)) throw new Fail('no sync is waiting. Start one with `xtend sync --prompt`.')
-  const { theirs, conflicted, reused, touched = [], tree = null, news = null } = readJson(file)
+  const { theirs, conflicted, reused, touched = [], tree = null, news = null, label = theirs } = readJson(file)
   const proofAt = stopgap.indexOf('--proof')
   const proof = proofAt >= 0 ? stopgap.splice(proofAt, 2)[1] || '' : ''
   const request = stopgap.join(' ').trim()
@@ -947,7 +1001,7 @@ function resumeSync(cfg, flag, asTemp = null) {
   const bad = Object.keys(reused).filter((f) => fileHash(f) !== reused[f])
   if (bad.length) fs.rmSync(git('rev-parse', '--git-path', 'rr-cache'), { recursive: true, force: true })
   else run('git', ['rerere'])
-  const subject = `xtend: sync ${theirs} (${git('rev-parse', '--short', theirs)})`
+  const subject = `xtend: sync ${label} (${git('rev-parse', '--short', theirs)})`
   if (request) {
     // The merge is committed as git made it, and what was changed since becomes its own commit, marked temporary.
     if (git('write-tree') === tree) throw new Fail('nothing changed since the merge, so there is no fix to record. Run `xtend sync --continue` without --temp.')
@@ -963,7 +1017,7 @@ function resumeSync(cfg, flag, asTemp = null) {
   fs.rmSync(file)
   const kept = Object.keys(reused).filter((f) => !bad.includes(f))
   const fixed = conflicted.split('\n').filter((f) => f && !kept.includes(f))
-  log(['merged upstream', kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`, fixed.length && `resolved by hand: ${fixed.join(', ')}`].filter(Boolean).join('; '))
+  log([`merged ${label === theirs ? 'upstream' : label}`, kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`, fixed.length && `resolved by hand: ${fixed.join(', ')}`].filter(Boolean).join('; '))
   retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
   if (news) reportNews(news)
   pushIfFork()
@@ -1052,7 +1106,7 @@ const stance = (p) => [TAKES[channel(p)], ...p.notes.map((n) => `  - ${n}`)].joi
 
 // Your own commits since upstream, minus xtend's setup files.
 function offerable(theirs) {
-  return git('rev-list', '--reverse', '--no-merges', `${theirs}..HEAD`).split('\n').filter(Boolean).map((sha) => ({
+  return git('rev-list', '--reverse', '--no-merges', 'HEAD', '--not', theirs, ...(hasRef(ROOT_REF) ? [ROOT_REF] : [])).split('\n').filter(Boolean).map((sha) => ({
     sha,
     subject: git('log', '-1', '--format=%s', sha).replace(/^xtend: /, ''),
     body: git('log', '-1', '--format=%b', sha),
@@ -1216,28 +1270,35 @@ function share(cfg, args) {
 
 const WORKFLOW_FILE = '.github/workflows/xtend.yml'
 
-function workflow(agent, agents) {
+// `setup` is the repo's own steps for the Action, from "daily": { "setup": [...] } in the config: what its prepare, check and verify need
+// that a bare runner lacks. A string is a command; an object is a step as GitHub writes it, such as { "uses": "actions/setup-node@v4" }.
+function workflow(agent, agents, setup = []) {
   const [, p] = presetOf(agent, agents)
+  const steps = setup.map((step) => `      - ${typeof step === 'string' ? `run: ${JSON.stringify(step)}` : JSON.stringify(step)}\n`).join('')
   return `name: xtend sync
 on:
   schedule: [{ cron: '17 6 * * *' }]
   workflow_dispatch:
 permissions:
   contents: write
+  issues: write
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-${p.install ? `      - run: npm i -g ${p.install}\n` : ''}      - run: |
+${steps}${p.install ? `      - run: npm i -g ${p.install}\n` : ''}      - run: |
           git config user.name "xtend"
           git config user.email "xtend@users.noreply.github.com"
           node .xtend/xtend.mjs sync
-${p.key ? `        env:\n          ${p.key}: \${{ secrets.${p.key} }}\n` : ''}`
+        env:
+          GH_TOKEN: \${{ github.token }}
+${p.key ? `          ${p.key}: \${{ secrets.${p.key} }}\n` : ''}`
 }
 
 function actionNote(agent, repo, agents) {
+  if (agent === NO_AGENT) return 'With no agent it lands the syncs that merge and pass by themselves, and opens an issue when one needs someone.'
   const [name, p] = presetOf(agent, agents)
   if (p.key) return `Give it a key once: gh secret set ${p.key} -R ${repo}`
   return `Add the install step and API key that ${name} needs to ${WORKFLOW_FILE}.`
@@ -1252,7 +1313,7 @@ function setDaily(cfg, [want]) {
   requireClean()
   if (want === 'on') {
     fs.mkdirSync(path.dirname(WORKFLOW_FILE), { recursive: true })
-    fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo), cfg.repo.agents))
+    fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo), cfg.repo.agents, cfg.repo.daily?.setup))
     git('add', WORKFLOW_FILE)
   } else if (on) git('rm', '-q', WORKFLOW_FILE)
   if (run('git', ['diff', '--cached', '--quiet']).ok) log(`daily sync is already ${want}`)
@@ -1288,7 +1349,7 @@ function setAgent(cfg, spec) {
   requireClean()
   const agent = agentCommand(spec.join(' '), cfg.repo.agents)
   fs.writeFileSync(CONFIG, JSON.stringify({ ...JSON.parse(fs.readFileSync(CONFIG, 'utf8')), agent }, null, 2) + '\n')
-  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo, agent), cfg.repo.agents))
+  if (fs.existsSync(WORKFLOW_FILE)) fs.writeFileSync(WORKFLOW_FILE, workflow(actionAgent(cfg.repo, agent), cfg.repo.agents, cfg.repo.daily?.setup))
   git('add', '-A')
   git('commit', '-q', '-m', `xtend: use ${presetOf(agent, cfg.repo.agents)[0]} as the agent`)
   log(`agent is now: ${agent}`)

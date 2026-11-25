@@ -50,6 +50,14 @@ If no agent CLI can run where you are, `xtend sync` cannot resolve a conflict. R
 
 A sync runs the repo's `prepare` command once the merge is in the tree (installing what new upstream code needs), then the check, then `verify` (the slow gate: a typecheck or a build). Nothing is committed or pushed until all three pass, and `--continue` runs them again. When it finishes, sync prints what came in: how many commits and files, which of them are upstream files this copy changed, and any host named in the incoming lines that this copy had not named before. Read those files and look at any new host before you tell the user the sync is done.
 
+## Upstream that is itself a fork
+
+When `.xtend/config.json` names a `root`, upstream was forked from it. `xtend status` shows how far upstream and this copy each trail the root. `xtend sync --root --prompt` merges the root directly and works like any other sync; with `"syncRoot": true` a plain sync takes upstream and then the root, one merge at a time, so run `xtend sync --prompt` again after each `--continue` until it says it is up to date. Expect the root to carry what upstream removed: when the check blocks something the root brought back, remove it again the way upstream did, and never loosen the check to get a merge through.
+
+## Unattended syncs
+
+Where the agent is set to `none`, `xtend sync` lands a sync that merges and passes by itself and otherwise changes nothing, exits 3 and prints what stood in the way (as a GitHub Action it also opens or adds to the issue "xtend: the daily sync needs a hand"). If you are asked to deal with one, run `xtend sync --prompt` and finish it as above.
+
 ## Giving back
 
 - Run `xtend share --json` and show the user what upstream takes and what they could offer.
