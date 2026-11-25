@@ -571,7 +571,7 @@ function retireTemps(cfg, fixes) {
     if (!fix.proof) continue
     // A proof that fails with the fix in place has stopped measuring the fix, so it would keep the fix forever.
     if (command(fix.proof)) {
-      log(`temporary fix "${fix.subject}" has a proof that fails even with the fix in place: ${fix.proof}\n  give it one that runs: xtend temp --proof ${fix.sha.slice(0, 10)} "<command>"`)
+      log(`temporary fix "${fix.subject}" has a proof that fails even with the fix in place, so it cannot say whether the fix is still needed: ${fix.proof}\n  if something else broke it (a sync often does), fix that and run: xtend temp --try\n  if the proof itself no longer runs, give the fix a new one: xtend temp --proof ${fix.sha.slice(0, 10)} "<command>"`)
       continue
     }
     const head = git('rev-parse', 'HEAD')
