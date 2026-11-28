@@ -53,10 +53,15 @@ const HELP = `xtend: keep your own version of any repo, with upstream merged in 
   xtend seam <file> "<text>" [-m why]   record a line of upstream's that your changes hang on; every check looks for it
   xtend seam --drop <file> "<text>"     stop tracking one
   xtend seams                           list them, and say which are gone
+  xtend names [--json]                  new lines from the last sync that use a name this copy changed ("renamed" in the config)
+  xtend before "<command>"              run a command on this copy as it was before the sync, to tell whose failure it is
+      [--at <commit>]                   or as it was at another commit
+  xtend before --done                   remove the checkout that command keeps beside this one
   xtend sync                            merge upstream; your agent resolves conflicts
   xtend sync --root                     merge the root instead: the repo your upstream was itself forked from
   xtend sync --prompt                   merge upstream; print what is left for an agent that resolves it itself
   xtend sync --continue | --abort       finish or drop a sync that --prompt left open
+      [-m "<what you decided>"]         with --continue: the merge commit's body, for whoever merges next
   xtend sheet                           (re)write the ref sheet agents read before editing
   xtend sheet --prompt                  print what the sheet step asks, for an agent that writes it itself
   xtend share [--json]                  what upstream accepts, and which of your changes you could offer
@@ -94,6 +99,17 @@ function git(...args) {
 }
 
 const tryGit = (...args) => run('git', args).ok
+// A merge can leave more paths than one command line holds, so a long list goes to git a batch at a time.
+function batches(paths, room = 100_000) {
+  const out = [[]]
+  let size = 0
+  for (const p of paths) {
+    if (size + p.length > room && out.at(-1).length) { out.push([]); size = 0 }
+    out.at(-1).push(p)
+    size += p.length + 1
+  }
+  return out.filter((b) => b.length)
+}
 const gh = (args, opts) => (process.env.XTEND_GH ? run(process.execPath, [process.env.XTEND_GH, ...args], opts) : run('gh', args, opts))
 const hasGh = () => !!process.env.XTEND_GH || has('gh')
 const has = (bin) => run(process.platform === 'win32' ? 'where' : 'which', [bin]).ok
@@ -182,6 +198,20 @@ function requireClean() {
   if (git('status', '--porcelain', '--untracked-files=all')) throw new Fail('working tree has uncommitted changes. Commit or stash them first.')
 }
 
+// The branch this copy is kept on can gain commits on origin while a sync is open: someone pushed, or another session did. What it
+// gained is in neither side of the merge, so a merge finished here and checked here says nothing about it. One ls-remote when it has not moved.
+function originAhead() {
+  if (!tryGit('remote', 'get-url', 'origin')) return null
+  const head = run('git', ['ls-remote', '--symref', 'origin', 'HEAD'])
+  const branch = head.out.match(/^ref: refs\/heads\/(\S+)\s+HEAD$/m)?.[1]
+  const sha = head.out.match(/^([0-9a-f]{40,})\s+HEAD$/m)?.[1]
+  if (!head.ok || !branch || !sha || tryGit('merge-base', '--is-ancestor', sha, 'HEAD')) return null
+  if (!run('git', ['fetch', '-q', 'origin', branch]).ok) return null
+  const commits = Number(git('rev-list', '--count', `HEAD..${sha}`))
+  return commits ? { branch, commits } : null
+}
+const originNote = (o) => `origin's ${o.branch} has ${plural(o.commits, 'commit')} this checkout does not have. Bring them in with \`git pull --no-rebase origin ${o.branch}\`, and run your checks again after: what passed before says nothing about them.`
+
 function pushIfFork() {
   if (!tryGit('remote', 'get-url', 'origin')) return
   const r = run('git', ['push', 'origin', 'HEAD'])
@@ -256,8 +286,8 @@ function agentUntil(cfg, step, vars, verify) {
   return { problem }
 }
 
-function command(cmd) {
-  const r = spawnSync(cmd, { shell: true, env: withPwd(), encoding: 'utf8', maxBuffer: 64 << 20 })
+function command(cmd, cwd = process.cwd()) {
+  const r = spawnSync(cmd, { shell: true, cwd, env: { ...process.env, PWD: cwd }, encoding: 'utf8', maxBuffer: 64 << 20 })
   return r.status === 0 ? null : `\`${cmd}\` failed:\n${`${r.stdout}\n${r.stderr}`.trim().slice(-4000)}`
 }
 
@@ -277,7 +307,7 @@ const prepare = (cfg) => (cfg.prepare ? command(cfg.prepare) : null)
 // `runs` are the commands that rebuild generated files this merge disturbed. They come after prepare, since a generator needs its
 // dependencies, and what they and prepare write (a rebuilt catalog, a lockfile the installer brought up to date) belongs to the merge.
 function checkMerge(cfg, runs = []) {
-  const unready = prepare(cfg) || runs.map(command).find(Boolean)
+  const unready = prepare(cfg) || runs.map((cmd) => command(cmd)).find(Boolean)
   if (unready) return unready
   if (cfg.prepare || runs.length) git('add', '-A')
   return check(cfg) || (cfg.verify ? command(cfg.verify) : null)
@@ -327,9 +357,39 @@ function mergeJson(base, ours, theirs) {
 const staged = (stage, file) => spawnSync('git', ['show', `:${stage}:${file}`], { encoding: 'utf8', maxBuffer: 64 << 20 })
 const jsonShape = (text) => ({ indent: text.match(/^([ \t]+)"/m)?.[1] ?? 2, end: text.endsWith('\n') ? '\n' : '' })
 
+const linesOf = (text) => text.match(/[^\n]*\n|[^\n]+$/g) || []
+
+// What the other side wrote where this side cut a block, in two kinds. Lines it put in before the first line the two versions share,
+// or after the last, with nothing of the block changed on that side of them, sit beside the block: new code that landed next to it.
+// Every other line of its own, added between the block's lines or written over one of them, is `inside`. Those may be the block, edited.
+function addedAroundCut(base, theirs) {
+  const b = linesOf(base)
+  const t = linesOf(theirs)
+  const none = { before: '', after: '', inside: t.filter((l) => l.trim()) }
+  if (!b.length || !t.length || b.length * t.length > 4e6) return none
+  // Longest common subsequence, walked from the top, so each line pairs with the earliest match that keeps the rest.
+  const len = Array.from({ length: b.length + 1 }, () => new Uint32Array(t.length + 1))
+  for (let i = b.length - 1; i >= 0; i--) for (let j = t.length - 1; j >= 0; j--) len[i][j] = b[i] === t[j] ? len[i + 1][j + 1] + 1 : Math.max(len[i + 1][j], len[i][j + 1])
+  const pairs = []
+  for (let i = 0, j = 0; i < b.length && j < t.length; ) {
+    if (b[i] === t[j]) pairs.push([i++, j++])
+    else if (len[i + 1][j] >= len[i][j + 1]) i++
+    else j++
+  }
+  if (!pairs.length) return none
+  const said = (lines) => lines.some((l) => l.trim())
+  const [first, last] = [pairs[0], pairs[pairs.length - 1]]
+  const before = first[0] === 0 ? t.slice(0, first[1]) : []
+  const after = last[0] === b.length - 1 ? t.slice(last[1] + 1) : []
+  const kept = [said(before) ? before : [], said(after) ? after : []]
+  const shared = new Set(pairs.map(([, j]) => j))
+  const inside = t.filter((l, j) => !shared.has(j) && j >= kept[0].length && j < t.length - kept[1].length && l.trim())
+  return { before: kept[0].join(''), after: kept[1].join(''), inside }
+}
+
 // Settles the conflicts that need no judgment, right after the merge and before anyone is asked:
 // - a file this side deleted and the other side went on editing stays deleted, since deleting it was the decision, and so does a
-//   block of lines this side cut out of a file;
+//   block of lines this side cut out of a file, while lines the other side added beside that block are kept;
 // - a lockfile, or a generated file the config says so for, is taken whole from one side, to be rebuilt by prepare or its own command;
 // - a JSON file is merged key by key: any the config names, and any other whose layout xtend can write back exactly as it was.
 function settle(cfg) {
@@ -339,7 +399,7 @@ function settle(cfg) {
     const [meta, file] = line.split('\t')
     stages.set(file, (stages.get(file) || new Set()).add(Number(meta.split(' ')[2])))
   }
-  const done = { kept: [], merged: [], taken: [], cut: [], runs: [] }
+  const done = { kept: [], merged: [], taken: [], cut: [], beside: [], inside: [], runs: [] }
   const used = new Set()
   const settled = new Set()
   for (const [file, has] of stages) {
@@ -377,15 +437,24 @@ function settle(cfg) {
   }
   // The same decision inside a file: a block this side cut out, which the other side went on editing, stays cut. Shown with the common
   // ancestor, a conflict whose "ours" half is empty is exactly that. Files git has already resolved from memory are left to that memory.
+  // The conflict also takes in whatever the other side added right next to the block. That is not an edit to what was cut, so it stays,
+  // and is listed for whoever finishes the sync: cutting it too would lose new upstream code without a word.
   const open = new Set(run('git', ['rerere', 'remaining']).out.split('\n'))
-  const hunk = /^<<<<<<< [^\n]*\n([\s\S]*?)^\|\|\|\|\|\|\| [^\n]*\n([\s\S]*?)^=======\r?\n[\s\S]*?^>>>>>>> [^\n]*\n/gm
+  const hunk = /^<<<<<<< [^\n]*\n([\s\S]*?)^\|\|\|\|\|\|\| [^\n]*\n([\s\S]*?)^=======\r?\n([\s\S]*?)^>>>>>>> [^\n]*\n/gm
   for (const [file, has] of stages) {
     if (settled.has(file) || !open.has(file) || [1, 2, 3].some((n) => !has.has(n))) continue
     if (!run('git', ['checkout', '--conflict=diff3', '--', file]).ok) continue
     let blocks = 0
     let left = 0
     const text = fs.readFileSync(file, 'utf8')
-    const out = text.replace(hunk, (all, ours, base) => (ours === '' && base.trim() !== '' ? (blocks++, '') : (left++, all)))
+    const out = text.replace(hunk, (all, ours, base, theirs) => {
+      if (ours !== '' || base.trim() === '') return left++, all
+      blocks++
+      const added = addedAroundCut(base, theirs)
+      for (const l of linesOf(added.before + added.after)) if (l.trim()) done.beside.push(`${file}: ${l.trim()}`)
+      for (const l of added.inside) done.inside.push(`${file}: ${l.trim()}`)
+      return added.before + added.after
+    })
     if (!blocks) {
       run('git', ['checkout', '--conflict=merge', '--', file])
       continue
@@ -399,9 +468,12 @@ function settle(cfg) {
 }
 
 const some = (files) => (files.length > 6 ? `${files.slice(0, 6).join(', ')} and ${files.length - 6} more` : files.join(', '))
+const listed = (lines, max = 200) => [...lines.slice(0, max), ...(lines.length > max ? [`and ${lines.length - max} more`] : [])].map((l) => `\n    ${l}`).join('')
 const settledLines = (done) => [
   done.kept.length && `kept ${plural(done.kept.length, 'file')} deleted that the other side had gone on editing: ${some(done.kept)}`,
   done.cut.length && `kept blocks cut out that the other side had gone on editing, in ${plural(done.cut.length, 'file')}: ${some(done.cut)}`,
+  done.beside.length && `kept ${plural(done.beside.length, 'line')} the other side added beside those blocks. Check each belongs in this copy:${listed(done.beside)}`,
+  done.inside.length && `left out ${plural(done.inside.length, 'line')} the other side wrote inside those blocks. Put back any that is not part of what was cut:${listed(done.inside)}`,
   done.merged.length && `merged ${plural(done.merged.length, 'JSON file')} key by key: ${some(done.merged)}`,
   done.taken.length && `took one side's copy of ${plural(done.taken.length, 'generated file')}, to be rebuilt: ${some(done.taken)}`,
   done.runs.length && `rebuilt them with: ${done.runs.join(' && ')}`,
@@ -412,7 +484,7 @@ const settledLines = (done) => [
 function replay(conflicted) {
   const open = conflicted && run('git', ['rerere', 'remaining']).out
   const reused = conflicted ? conflicted.split('\n').filter((f) => !open.split('\n').includes(f)) : []
-  if (reused.length) git('add', '--', ...reused)
+  for (const some of batches(reused)) git('add', '--', ...some)
   const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null)
   const replayed = new Map(reused.map((f) => [f, read(f)]))
   const wrong = () => {
@@ -430,7 +502,7 @@ const replayed = (reused) => `git already resolved ${reused.join(', ')} the way 
 function markersLeft(conflicted) {
   const left = [
     run('git', ['grep', '--cached', '-lE', '^(<<<<<<<|>>>>>>>) ']).out,
-    conflicted && run('git', ['grep', '--cached', '-lE', '^=======[[:space:]]*$', '--', ...conflicted.split('\n')]).out,
+    ...(conflicted ? batches(conflicted.split('\n')).map((some) => run('git', ['grep', '--cached', '-lE', '^=======[[:space:]]*$', '--', ...some]).out) : []),
   ].filter(Boolean).join('\n')
   return left ? `conflict markers left in:\n${left}` : null
 }
@@ -702,6 +774,14 @@ const fetchRoot = (cfg) => run('git', ['fetch', '-q', repoUrl(cfg.root), `+${cfg
 // whatever a commit has beyond the two of them, never "ahead of upstream" alone.
 const sources = (cfg) => [`upstream/${cfg.branch}`, ...(cfg.root ? [ROOT_REF] : [])].filter(hasRef)
 const ownRange = (cfg, tip = 'HEAD') => [tip, '--not', ...sources(cfg)]
+// A shallow clone has no history before the point it was cut at. When that point lies inside this copy's own commits, the commit there
+// has no parent to compare with: it looks as if it added every file, and there is nothing shared with upstream to merge from.
+function cutShort(cfg) {
+  const file = git('rev-parse', '--git-path', 'shallow')
+  const cut = new Set(fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean) : [])
+  return cut.size > 0 && git('rev-list', ...ownRange(cfg)).split('\n').some((sha) => cut.has(sha))
+}
+const DEEPEN = 'Fetch the rest of its history first: `git fetch --unshallow origin`, or a deeper `git fetch --depth=<n> origin <branch>` where the whole of it is too much.'
 
 function tempFixes(cfg) {
   const trailer = (key) => `%(trailers:key=${key},valueonly,separator=%x20)`
@@ -854,9 +934,11 @@ function seams(cfg, args) {
 // The files of upstream's that this copy has changed: where a merge can collide, and where seams live. Worked out from this copy's own
 // commits, since with two sources there is no single commit to diff against. A file counts while it differs from every source that has it.
 function yourUpstreamFiles(cfg) {
-  const touched = [...new Set(git('log', '--no-merges', '--format=', '--name-only', ...ownRange(cfg), '--', ...MINE).split('\n').filter(Boolean))].filter((f) => fs.existsSync(f))
+  // A commit with no parent is where a shallow clone was cut, and would count every file in the repo as changed here.
+  const touched = [...new Set(git('log', '--no-merges', '--min-parents=1', '--format=', '--name-only', ...ownRange(cfg), '--', ...MINE).split('\n').filter(Boolean))].filter((f) => fs.existsSync(f))
   if (!touched.length) return []
-  const views = sources(cfg).map((ref) => new Map(git('diff', '--name-status', '--no-renames', ref, 'HEAD', '--', ...touched).split('\n').filter(Boolean).map((l) => l.split('\t').reverse())))
+  // The whole diff, read here, since the files touched can be more than a command line holds.
+  const views = sources(cfg).map((ref) => new Map(git('diff', '--name-status', '--no-renames', ref, 'HEAD', '--', ...MINE).split('\n').filter(Boolean).map((l) => l.split('\t').reverse())))
   return touched.filter((f) => views.some((v) => v.get(f) === 'M') && views.every((v) => v.has(f))).sort()
 }
 
@@ -882,6 +964,76 @@ function incomingNews(cfg, theirs, touched) {
   }
 }
 
+// "renamed" in the config maps a name of upstream's to what this copy calls the same thing: { "Acme Code": "My Code" }. Upstream goes on
+// writing its own name in new lines, and a merge takes them without a conflict, so nothing fails and the old name turns up in the product.
+// These are the lines added since `base` that say it. Which of them a person or a model reads is for whoever finishes the sync to judge.
+function renamedPairs(cfg) {
+  const pairs = Object.entries(cfg.renamed || {})
+  if (pairs.some(([from, to]) => !from || typeof to !== 'string')) throw new Fail(`${CONFIG}: "renamed" maps a name of upstream's to this copy's name for it, like { "Acme Code": "My Code" }`)
+  return pairs
+}
+
+function oldNames(cfg, base, cached = false) {
+  const pairs = renamedPairs(cfg)
+  if (!pairs.length) return []
+  const anyName = pairs.map(([from]) => from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const diff = run('git', ['-c', 'core.quotePath=false', 'diff', '-U0', '--no-renames', '--no-color', '--no-ext-diff', '-G', anyName, ...(cached ? ['--cached'] : []), base, '--', ...MINE])
+  if (!diff.ok) return []
+  const found = []
+  let file = null
+  let line = 0
+  let left = [0, 0]
+  for (const l of diff.out.split('\n')) {
+    // Inside a hunk the counts from its header say how many lines are still its own, so a line of content that looks like a header is not read as one.
+    if (left[0] + left[1] > 0) {
+      if (l.startsWith('-')) left[0]--
+      else if (l.startsWith('+')) {
+        left[1]--
+        for (const [from, to] of pairs) if (l.includes(from)) found.push({ name: from, to, file, line, text: l.slice(1).trim() })
+        line++
+      }
+      continue
+    }
+    const hunk = l.match(/^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
+    if (hunk) { left = [Number(hunk[1] ?? 1), Number(hunk[3] ?? 1)]; line = Number(hunk[2]) }
+    else if (l.startsWith('+++ ')) file = l === '+++ /dev/null' ? null : l.slice(6)
+  }
+  return found
+}
+
+// For the news: per name, how many lines and which files.
+function nameCounts(found) {
+  const by = new Map()
+  for (const f of found) {
+    const row = by.get(f.name) || { name: f.name, to: f.to, lines: 0, files: [] }
+    row.lines++
+    if (!row.files.includes(f.file)) row.files.push(f.file)
+    by.set(f.name, row)
+  }
+  return [...by.values()]
+}
+const nameLines = (names = []) => names.map((n) => `${plural(n.lines, 'new line')} still ${n.lines === 1 ? 'says' : 'say'} "${n.name}", which this copy calls "${n.to}", in ${plural(n.files.length, 'file')}: ${some(n.files)}. Rename the ones a person or a model reads; \`xtend names\` lists them`)
+
+// The commit this copy stood at before its last sync, or stands at now while one is open.
+function beforeSync() {
+  if (fs.existsSync(syncState())) return git('rev-parse', 'HEAD')
+  const merge = git('log', '--merges', '--first-parent', '-1', '--format=%H', '--grep=^xtend: sync ')
+  return merge ? git('rev-parse', `${merge}^1`) : null
+}
+
+function names(cfg, args) {
+  if (args.length && args.join() !== '--json') throw new Fail('usage: xtend names [--json]')
+  const pairs = renamedPairs(cfg)
+  if (!pairs.length) return console.log(`no names recorded. If this copy calls something by another name than upstream does, say so in ${CONFIG}: "renamed": { "<upstream's name>": "<yours>" }`)
+  const base = beforeSync()
+  if (!base) return console.log('no sync yet, so no new lines to look through')
+  const found = oldNames(cfg, base)
+  if (args.length) return console.log(JSON.stringify(found, null, 2))
+  if (!found.length) return console.log(`no line that came in with the last sync says ${pairs.map(([from]) => `"${from}"`).join(' or ')}`)
+  for (const f of found) console.log(`${f.file}:${f.line}: ${f.text}`)
+  log(`${plural(found.length, 'line')} new since before the last sync. Comments and the like can stay; what a person or a model reads wants this copy's name.`)
+}
+
 const lastSync = () => git('rev-parse', '--git-path', 'xtend-last-sync.json')
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : /(s|x|ch|sh)$/.test(word) ? 'es' : 's'}`
 
@@ -890,6 +1042,7 @@ function newsLines(news) {
     `brought in ${plural(news.commits, 'upstream commit')} (${news.to}) changing ${plural(news.files, 'file')}`,
     news.yours.length ? `${news.yours.length} of those are files you changed, so look at them: ${news.yours.join(', ')}` : 'none of those are files you changed',
     news.hosts === null ? null : news.hosts.length ? `hosts named in what came in that this copy had not named before: ${news.hosts.join(', ')}` : 'no host is named in what came in that this copy had not named before',
+    ...nameLines(news.names),
   ].filter(Boolean)
 }
 
@@ -915,6 +1068,8 @@ function status(cfg, args) {
     if (fetch && !fetchRoot(cfg)) notes.push(`could not reach ${cfg.root}, so its numbers are as of the last fetch`)
     if (hasRef(ROOT_REF)) root = { repo: cfg.root, upstreamBehind: count(`${theirs}..${ROOT_REF}`), behind: count(`HEAD..${ROOT_REF}`), newest: git('log', '-1', '--format=%cs', ROOT_REF), synced: !!cfg.syncRoot }
   }
+  const origin = fetch ? originAhead() : null
+  if (cutShort(cfg)) notes.push(`this clone is shallow and stops short of where this copy left upstream, so "of its own" and "yours" count only what is here. ${DEEPEN}`)
   const fixes = tempFixes(cfg)
   const generated = generatedRules(cfg).map((r) => r.test)
   const out = {
@@ -923,6 +1078,7 @@ function status(cfg, args) {
     behind: count(`HEAD..${theirs}`),
     ahead: Number(git('rev-list', '--count', ...ownRange(cfg))),
     root,
+    origin,
     syncOpen: fs.existsSync(syncState()),
     uncommitted: git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean).length,
     yourUpstreamFiles: yourUpstreamFiles(cfg).map((file) => ({
@@ -941,6 +1097,7 @@ function status(cfg, args) {
   const row = (name, text) => console.log(`${name.padEnd(10)}${text}`)
   row('upstream', `${out.upstream} (${out.branch}): this copy is ${out.behind} behind, with ${plural(out.ahead, 'commit')} of its own${out.behind ? '. `xtend sync` brings it in' : ''}`)
   if (root) row('root', `${root.repo}: upstream is ${root.upstreamBehind} behind it and this copy ${root.behind} (its newest commit is from ${root.newest})${root.behind ? `. ${root.synced ? '`xtend sync` brings it in too' : '`xtend sync --root` merges it directly'}` : ''}`)
+  if (origin) row('origin', originNote(origin))
   if (out.syncOpen) row('sync', 'one is open. Finish it with `xtend sync --continue`, or drop it with `xtend sync --abort`')
   if (out.uncommitted) row('tree', `${plural(out.uncommitted, 'uncommitted file')}`)
   // A changed file of upstream's with neither a seam nor a temporary fix is one a merge can quietly undo: the list to record seams from.
@@ -959,13 +1116,16 @@ function status(cfg, args) {
 // --- sync --------------------------------------------------------------
 
 function sync(cfg, args = []) {
-  const usage = 'usage: xtend sync [--root] [--prompt] | --continue [--temp "<what you fixed>" [--proof "<command>"]] | --abort'
+  const usage = 'usage: xtend sync [--root] [--prompt] | --continue [-m "<what you decided>"] [--temp "<what you fixed>" [--proof "<command>"]] | --abort'
   const onlyRoot = args.includes('--root')
   const [flag = '', ...more] = args.filter((a) => a !== '--root')
   if (flag && !['--prompt', '--continue', '--abort'].includes(flag)) throw new Fail(usage)
+  const at = more.indexOf('-m')
+  const body = at >= 0 ? more.splice(at, 2)[1] || '' : ''
+  if (at >= 0 && (flag !== '--continue' || !body)) throw new Fail(usage)
   if (more.length && (flag !== '--continue' || more[0] !== '--temp')) throw new Fail(usage)
   if (onlyRoot && (flag === '--continue' || flag === '--abort')) throw new Fail(usage)
-  if (flag === '--continue' || flag === '--abort') return resumeSync(cfg, flag, more.length ? more.slice(1) : null)
+  if (flag === '--continue' || flag === '--abort') return resumeSync(cfg, flag, more.length ? more.slice(1) : null, body)
   requireClean()
   if (onlyRoot && !cfg.root) throw new Fail(`this copy has no root. Set "root": "owner/repo" in ${CONFIG}: the repo your upstream was itself forked from.`)
   if (!tryGit('remote', 'get-url', 'upstream')) git('remote', 'add', 'upstream', cfg.upstream)
@@ -978,6 +1138,9 @@ function sync(cfg, args = []) {
     else if (onlyRoot) throw new Fail(`could not fetch ${cfg.rootBranch || cfg.branch} from ${cfg.root}`)
     else log(`could not reach ${cfg.root}, so only upstream is synced this time`)
   }
+  const stale = originAhead()
+  if (stale) log(originNote(stale))
+  if (from.some((source) => !tryGit('merge-base', 'HEAD', source.theirs)) && cutShort(cfg)) throw new Fail(`this clone is shallow and stops short of where this copy left upstream, so there is nothing to merge from. ${DEEPEN}`)
   let merged = 0
   for (const source of from) {
     if (tryGit('merge-base', '--is-ancestor', source.theirs, 'HEAD')) continue
@@ -1040,7 +1203,7 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
     git('add', '--', ...files)
     const rest = open.split('\n').filter((f) => !files.includes(f)).join('\n')
     const proofs = [...new Set(temps.filter((t) => t.proof && t.files.some((f) => files.includes(f))).map((t) => t.proof))]
-    const trouble = prepare(cfg) || proofs.map(command).find(Boolean) || (rest ? null : verify())
+    const trouble = prepare(cfg) || proofs.map((cmd) => command(cmd)).find(Boolean) || (rest ? null : verify())
     if (trouble) return git('checkout', '-m', '--', ...files)
     open = rest
     yielded = files
@@ -1052,6 +1215,8 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
     problem = open ? `conflicts in:\n${open}` : verify()
     if (problem && reused.length) problem = `${replayed(reused)}\n\n${problem}`
     if (problem && byRule.length) problem = `xtend has already settled these by rule, so leave them as they are unless the failure below is in them:\n${byRule.map((l) => `- ${l}`).join('\n')}\n\n${problem}`
+    const oldNamed = problem ? nameLines(nameCounts(oldNames(cfg, 'HEAD'))) : []
+    if (oldNamed.length) problem += `\n\nAlso, in what is coming in:\n${oldNamed.map((l) => `- ${l.replace(' still ', ' ')}`).join('\n')}`
     // For an agent that is already working in this repo: leave the merge open and hand it the same prompt the sync step would get.
     if (problem && flag === '--prompt') {
       // With no conflicts the index is exactly what the merge produced, so a fix made from here on can be told apart from the merge.
@@ -1075,6 +1240,7 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
     }
     if (!problem) {
       bad = wrong()
+      news.names = nameCounts(oldNames(cfg, 'HEAD', true))
       const c = run('git', ['commit', '-q', '-m', `xtend: sync ${label} (${git('rev-parse', '--short', theirs)})`])
       if (!c.ok) problem = `git commit failed:\n${c.err || c.out}`
     }
@@ -1103,7 +1269,7 @@ function syncFrom(cfg, flag, { theirs, label, what }) {
   return true
 }
 
-function resumeSync(cfg, flag, asTemp = null) {
+function resumeSync(cfg, flag, asTemp = null, body = '') {
   const stopgap = asTemp || []
   const file = syncState()
   if (!fs.existsSync(file)) throw new Fail('no sync is waiting. Start one with `xtend sync --prompt`.')
@@ -1134,17 +1300,19 @@ function resumeSync(cfg, flag, asTemp = null) {
   const bad = Object.keys(reused).filter((f) => fileHash(f) !== reused[f])
   if (bad.length) fs.rmSync(git('rev-parse', '--git-path', 'rr-cache'), { recursive: true, force: true })
   else run('git', ['rerere'])
-  const subject = `xtend: sync ${label} (${git('rev-parse', '--short', theirs)})`
+  const names = nameCounts(oldNames(cfg, 'HEAD', true))
+  // What was merged, not where `theirs` points by now: a fetch while the sync was open may have moved it on.
+  const subject = `xtend: sync ${label} (${git('rev-parse', '--short', 'MERGE_HEAD')})`
   if (request) {
     // The merge is committed as git made it, and what was changed since becomes its own commit, marked temporary.
     if (git('write-tree') === tree) throw new Fail('nothing changed since the merge, so there is no fix to record. Run `xtend sync --continue` without --temp.')
-    const merge = git('commit-tree', tree, '-p', 'HEAD', '-p', 'MERGE_HEAD', '-m', subject)
+    const merge = git('commit-tree', tree, '-p', 'HEAD', '-p', 'MERGE_HEAD', '-m', subject, ...(body ? ['-m', body] : []))
     git('update-ref', 'HEAD', merge)
     run('git', ['merge', '--quit'])
     git('commit', '-q', '-m', `xtend: ${request}`, '-m', tempTrailers(true, proof))
     log(`recorded "${request}" as a temporary fix`)
   } else {
-    const c = run('git', ['commit', '-q', '-m', subject])
+    const c = run('git', ['commit', '-q', '-m', subject, ...(body ? ['-m', body] : [])])
     if (!c.ok) throw new Fail(`git commit failed:\n${c.err || c.out}`)
   }
   fs.rmSync(file)
@@ -1153,13 +1321,64 @@ function resumeSync(cfg, flag, asTemp = null) {
   for (const line of byRule) log(line)
   log([`merged ${label === theirs ? 'upstream' : label}`, kept.length && `reused ${kept.length} resolution${kept.length === 1 ? '' : 's'} git remembered: ${kept.join(', ')}`, fixed.length && `resolved by hand: ${fixed.join(', ')}`].filter(Boolean).join('; '))
   retireTemps(cfg, tempFixes(cfg).filter((t) => t.files.some((f) => touched.includes(f))))
-  if (news) reportNews(news)
+  if (news) reportNews({ ...news, names })
+  const moved = originAhead()
+  if (moved) log(originNote(moved))
+  if (fs.existsSync(beforeState())) log(`the copy from before this sync is still at ${readJson(beforeState()).dir}. Remove it with \`xtend before --done\`.`)
   pushIfFork()
 }
 
 function resolveMerge(cfg, { ours, incoming, problem }, verify) {
   const vars = { sheet: sheet(), ours: ours || '(none recorded)', incoming, problem, seams: seamList(cfg) }
   return agentUntil(cfg, 'sync', vars, verify).problem
+}
+
+// --- before ------------------------------------------------------------
+
+// A failure after a sync is either the merge's doing or was there already, and only the same command run on this copy as it was before
+// tells which. `before` keeps one more checkout of that commit beside this one, prepares it once, and runs the command there.
+const beforeState = () => git('rev-parse', '--git-path', 'xtend-before.json')
+
+function dropBefore() {
+  const file = beforeState()
+  if (!fs.existsSync(file)) return false
+  const { dir } = readJson(file)
+  run('git', ['worktree', 'remove', '--force', dir])
+  run('git', ['worktree', 'prune'])
+  fs.rmSync(file)
+  return true
+}
+
+function before(cfg, args) {
+  const usage = 'usage: xtend before [--at <commit>] "<command>" | xtend before --done'
+  if (args.join() === '--done') return log(dropBefore() ? 'removed the copy from before the sync' : 'there is no copy from before a sync to remove')
+  const at = args.indexOf('--at')
+  const asked = at >= 0 ? args.splice(at, 2)[1] || '' : ''
+  const cmd = args.join(' ').trim()
+  if (!cmd || cmd.startsWith('--') || (at >= 0 && !asked)) throw new Fail(usage)
+  const want = asked || beforeSync()
+  if (!want) throw new Fail('there is no sync to look behind yet. Name a commit: xtend before --at <commit> "<command>"')
+  const sha = run('git', ['rev-parse', '--verify', '-q', `${want}^{commit}`]).out
+  if (!sha) throw new Fail(`${want} is not a commit here`)
+  const file = beforeState()
+  let state = fs.existsSync(file) ? readJson(file) : null
+  if (state && (state.sha !== sha || !fs.existsSync(state.dir))) { dropBefore(); state = null }
+  if (!state) {
+    const dir = path.resolve('..', `${path.basename(process.cwd())}-before`)
+    if (fs.existsSync(dir)) throw new Fail(`${dir} is in the way. Move it, then run this again.`)
+    git('worktree', 'add', '-q', '--detach', dir, sha)
+    state = { dir, sha }
+    fs.writeFileSync(file, JSON.stringify(state))
+    log(`checked out ${sha.slice(0, 10)} in ${dir}${cfg.prepare ? `, preparing it with: ${cfg.prepare}` : ''}`)
+    const unready = cfg.prepare ? command(cfg.prepare, dir) : null
+    if (unready) {
+      dropBefore()
+      throw new Fail(`could not prepare the copy from before, so it was removed:\n${unready}`)
+    }
+  }
+  const r = spawnSync(cmd, { shell: true, cwd: state.dir, env: { ...process.env, PWD: state.dir }, stdio: 'inherit' })
+  log(`that ran on this copy as it was at ${sha.slice(0, 10)}, in ${state.dir}, and ${r.status === 0 ? 'passed' : `failed (exit ${r.status ?? r.signal})`}. A failure you see there as well is not this sync's doing. \`xtend before --done\` removes the copy.`)
+  process.exitCode = r.status ?? 1
 }
 
 // --- share -------------------------------------------------------------
@@ -1543,6 +1762,8 @@ try {
   else if (verb === 'status') status(loadConfig(), rest)
   else if (verb === 'seam') seam(loadConfig(), rest)
   else if (verb === 'seams') seams(loadConfig(), rest)
+  else if (verb === 'names') names(loadConfig(), rest)
+  else if (verb === 'before') before(loadConfig(), rest)
   else if (verb === 'share') share(loadConfig(), rest)
   else if (verb === 'sheet') writeSheet(loadConfig(false), rest)
   else if (verb === 'update' && !rest.length) (loadConfig(), update())

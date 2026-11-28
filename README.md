@@ -56,7 +56,7 @@ If the agent has to change a file git replayed, that memory was wrong, and xTend
 rerere only replays a conflict it has seen, word for word. Many conflicts are new every time and still need no judgment, so xTend settles them itself, right after the merge and before anyone is asked:
 
 - **A file you deleted that upstream keeps editing stays deleted.** Deleting it was the decision. (The other way round, a file you changed that upstream deleted, is still yours to judge.)
-- **A block you cut out of a file stays cut, the same way.** When your side of a conflict is empty and the lines both sides started from were not, you removed them and upstream edited them. xTend removes them again and leaves any other conflict in that file for the agent, shown with the original lines.
+- **A block you cut out of a file stays cut, the same way.** When your side of a conflict is empty and the lines both sides started from were not, you removed them and upstream edited them. xTend removes them again and leaves any other conflict in that file for the agent, shown with the original lines. Git draws such a conflict wide enough to take in whatever upstream added right next to the block, which is new code and no edit to what you cut. Those lines stay in, and the sync lists them for you to check. Lines upstream wrote inside the block go with it, and are listed too, so no upstream line leaves without a word.
 - **A lockfile is taken from upstream.** Your `prepare` installer then brings your own dependencies back into it, and what it writes is part of the merge. xTend knows the usual names: `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `uv.lock`, `go.sum` and others.
 - **A JSON file is merged key by key.** Two sides that each added a key side by side conflict as text and not as data. Each key goes to whichever side changed it, with your new keys placed where they stood. A key both sides changed differently is a real conflict and is left for the agent. xTend does this for any JSON file it can write back byte for byte, so it never reformats a file by merging it.
 - **A generated file follows what you tell it**, under `generated` in `.xtend/config.json`:
@@ -282,6 +282,32 @@ You may follow a fork because of what it adds or strips out, while the fork foll
 
 Merging the root brings in what your upstream chose to leave out. Your check is what stands between that and your copy, so make it look for the things you followed the fork to avoid.
 
+## After a big merge
+
+Some of what a large merge gets wrong raises no conflict and fails no check. Four things help with that.
+
+**Names you changed.** If your copy calls the product something else, upstream still writes its own name in every new line, and the merge takes them quietly. Tell xtend the pair:
+
+```json
+{ "renamed": { "Acme Code": "My Code" } }
+```
+
+A sync then says how many new lines use the old name and in which files, and `xtend names` lists each one with its line number. Comments can keep the old name. What a person or a model reads wants yours.
+
+**Whose failure is it?** A test that fails after a sync was either broken by the merge or was failing already. `xtend before "<command>"` runs the command on your copy as it was before the sync, in a checkout of its own beside this one, prepared once and reused:
+
+```sh
+xtend before "npm test -- auth"       # passes there and fails here: the merge did it
+xtend before --at origin/main "npm test"
+xtend before --done                   # remove that checkout when you are finished
+```
+
+**An origin that moved on.** A long sync is often done on a side branch, and the branch your copy is kept on gains commits meanwhile. They are in neither side of the merge, so a merge that passed here says nothing about them. `xtend status`, and a sync as it starts and as it finishes, say when origin's default branch has commits your checkout lacks, and how to bring them in.
+
+**What you decided.** `xtend sync --continue -m "<what you decided>"` puts your account of the merge in the merge commit, where whoever merges next will read it. The subject names the commit that was merged.
+
+A shallow clone that stops inside your own commits cannot tell your work from upstream's. Status says so, and a sync asks you to fetch the rest of the history first.
+
 ## When your agent is already in the repo
 
 An agent working inside a session often cannot start a second agent CLI. It can still do every step itself:
@@ -290,7 +316,7 @@ An agent working inside a session often cannot start a second agent CLI. It can 
 xtend commit "add a dark mode toggle" -m "what changed and why"   # after editing: run the check, commit, push
 xtend sheet --prompt     # print the ref sheet instructions; write the sheet, commit it as "xtend: write ref sheet"
 xtend sync --prompt      # merge upstream; if something is left, print it and leave the merge open
-xtend sync --continue    # check the resolution, commit the merge and push
+xtend sync --continue    # check the resolution, commit the merge and push; add -m "<what you decided>" for the merge commit's body
 xtend sync --abort       # or put everything back
 ```
 

@@ -907,7 +907,7 @@ writeUp({
 }, 'more telemetry, a string, a dependency')
 r = xtend(ruled, ['sync', '--prompt'], dead)
 assert.equal(r.status, 2, r.stderr + r.stdout)
-assert.match(r.stdout, /xtend has already settled these by rule[\s\S]*- kept 1 file deleted that the other side had gone on editing: telemetry\.js\n- kept blocks cut out that the other side had gone on editing, in 1 file: block\.js\n- merged 2 JSON files key by key: messages\.json, package\.json\n- took one side's copy of 1 generated file, to be rebuilt: pnpm-lock\.yaml\n- rebuilt them with: node [^\n]*sort\.mjs/)
+assert.match(r.stdout, /xtend has already settled these by rule[\s\S]*- kept 1 file deleted that the other side had gone on editing: telemetry\.js\n- kept blocks cut out that the other side had gone on editing, in 1 file: block\.js\n- left out 2 lines the other side wrote inside those blocks\. Put back any that is not part of what was cut:\n    block\.js: \/\/ report more usage\n    block\.js: const sent = a \+ 1\n- merged 2 JSON files key by key: messages\.json, package\.json\n- took one side's copy of 1 generated file, to be rebuilt: pnpm-lock\.yaml\n- rebuilt them with: node [^\n]*sort\.mjs/)
 assert.match(r.stdout, /conflicts in:\nkept\.js\n/, 'a file this copy changed and upstream deleted is still for someone to judge')
 assert.equal(git(ruled, 'diff', '--name-only', '--diff-filter=U'), 'kept.js')
 assert.ok(!fs.existsSync(path.join(ruled, 'telemetry.js')), 'the deletion holds')
@@ -953,6 +953,130 @@ assert.match(r.stdout, /conflicts in:\ncompact\.json\nmessages\.json/)
 assert.equal(git(ruled, 'status', '--porcelain'), '')
 fs.writeFileSync(rCfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(rCfg)), generated: [{ files: 'nothing.json', merge: 'both' }] }))
 assert.match(xtend(ruled, ['status', '--no-fetch'], dead).stderr, /a generated entry is a file pattern, or \{ "files"/)
+
+// --- what one long merge taught ---
+// A copy that renamed the product and cut the tracking out, kept on an origin of its own, merging on a side branch.
+const lUp = path.join(root, 'lup')
+fs.mkdirSync(lUp)
+git(lUp, 'init', '-q', '-b', 'main')
+git(lUp, 'config', 'user.email', 'o@x'), git(lUp, 'config', 'user.name', 'owner')
+const writeL = (files, msg) => {
+  for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(lUp, file), body)
+  git(lUp, 'add', '-A'), git(lUp, 'commit', '-q', '-m', msg)
+}
+writeL({
+  'app.js': "console.log('Acme Code')\n",
+  'wire.js': 'const handlers = []\nhandlers.push(track)\nhandlers.push(report)\nstart(handlers)\n',
+  'check.js': 'process.exit(0)\n',
+}, 'initial')
+r = xtend(work, ['get', lUp, '--name', 'learn'])
+assert.equal(r.status, 0, r.stderr + r.stdout)
+const learn = path.join(work, 'learn')
+git(learn, 'config', 'user.email', 'u@x'), git(learn, 'config', 'user.name', 'user')
+const lOrigin = path.join(root, 'lorigin.git')
+git(root, 'init', '-q', '--bare', '-b', 'main', lOrigin)
+git(learn, 'remote', 'add', 'origin', lOrigin)
+const lCfg = path.join(learn, '.xtend/config.json')
+const setL = (more) => fs.writeFileSync(lCfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(lCfg)), ...more }, null, 2) + '\n')
+const mineL = (files) => { for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(learn, file), body) }
+setL({ renamed: { 'Acme Code': 7 } })
+assert.match(xtend(learn, ['names'], dead).stderr, /"renamed" maps a name of upstream's to this copy's name for it/)
+setL({ check: 'node check.js', renamed: undefined })
+assert.match(xtend(learn, ['names'], dead).stdout, /no names recorded\. If this copy calls something by another name/)
+setL({ renamed: { 'Acme Code': 'My Code' } })
+assert.match(xtend(learn, ['names'], dead).stdout, /no sync yet/)
+assert.match(xtend(learn, ['before', 'node check.js'], dead).stderr, /there is no sync to look behind yet/)
+assert.match(xtend(learn, ['before'], dead).stderr, /usage: xtend before/)
+mineL({ 'app.js': "console.log('My Code')\n", 'wire.js': 'const handlers = []\nstart(handlers)\n' })
+r = xtend(learn, ['commit', 'my own name, and no tracking'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.equal(git(lOrigin, 'rev-parse', 'main'), git(learn, 'rev-parse', 'HEAD'), 'the copy is kept on its origin')
+git(learn, 'checkout', '-q', '-b', 'merge-work')
+
+// Upstream adds a handler before the tracking, one after it and one in the middle, starts a new page under its own name, and breaks the check.
+writeL({
+  'wire.js': 'const handlers = []\nhandlers.push(progress)\nhandlers.push(track)\nhandlers.push(trackMore)\nhandlers.push(report)\nhandlers.push(migrate)\nstart(handlers)\n',
+  'about.js': "console.log('About Acme Code')\n// Acme Code keeps this\n",
+  'check.js': 'process.exit(1)\n',
+}, 'more handlers, an about page, a broken check')
+const mergedSha = git(lUp, 'rev-parse', 'HEAD')
+r = xtend(learn, ['sync', '--prompt'], dead)
+assert.equal(r.status, 2, r.stderr + r.stdout)
+assert.match(r.stdout, /- kept blocks cut out[^\n]*in 1 file: wire\.js\n- kept 2 lines the other side added beside those blocks\. Check each belongs in this copy:\n {4}wire\.js: handlers\.push\(progress\)\n {4}wire\.js: handlers\.push\(migrate\)\n- left out 1 line the other side wrote inside those blocks\. Put back any that is not part of what was cut:\n {4}wire\.js: handlers\.push\(trackMore\)\n/, 'what upstream added next to a cut block is kept and listed, what it added inside is listed')
+assert.equal(fs.readFileSync(path.join(learn, 'wire.js'), 'utf8'), 'const handlers = []\nhandlers.push(progress)\nhandlers.push(migrate)\nstart(handlers)\n', 'the block stays cut and the new lines beside it stay in')
+assert.equal(git(learn, 'diff', '--name-only', '--diff-filter=U'), '', 'so that file is settled')
+assert.match(r.stdout, /`node check\.js` failed/)
+assert.match(r.stdout, /Also, in what is coming in:\n- 2 new lines say "Acme Code", which this copy calls "My Code", in 1 file: about\.js\. Rename the ones a person or a model reads; `xtend names` lists them\n/, 'the prompt says which new lines use a name this copy changed')
+assert.equal(xtend(learn, ['names'], dead).stdout, "about.js:1: console.log('About Acme Code')\nabout.js:2: // Acme Code keeps this\nxtend: 2 lines new since before the last sync. Comments and the like can stay; what a person or a model reads wants this copy's name.\n")
+
+// Whose failure is it? The same command on the copy as it was before the sync passes, so the merge brought it.
+const beforeDir = path.join(work, 'learn-before')
+r = xtend(learn, ['before', 'node check.js'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /checked out [0-9a-f]{10} in .*learn-before\n[\s\S]*that ran on this copy as it was at [0-9a-f]{10}, in .*learn-before, and passed\. A failure you see there as well is not this sync's doing\. `xtend before --done` removes the copy\./)
+assert.equal(fs.readFileSync(path.join(beforeDir, 'check.js'), 'utf8'), 'process.exit(0)\n')
+assert.equal(git(learn, 'status', '--porcelain', '--', 'wire.js').slice(0, 2), 'M ', 'the open merge is left as it was')
+r = xtend(learn, ['before', 'node', '-e', '"process.exit(3)"'], dead)
+assert.equal(r.status, 3, 'the command\'s own exit status comes back')
+assert.doesNotMatch(r.stdout, /checked out/, 'and the copy is prepared once, then reused')
+assert.match(r.stdout, /and failed \(exit 3\)/)
+
+// While the sync is open, origin's main gains a commit from elsewhere, and upstream moves on too.
+const lOther = path.join(root, 'lother')
+git(root, 'clone', '-q', lOrigin, lOther)
+git(lOther, 'config', 'user.email', 'e@x'), git(lOther, 'config', 'user.name', 'elsewhere')
+fs.writeFileSync(path.join(lOther, 'elsewhere.txt'), 'from another session\n')
+git(lOther, 'add', '-A'), git(lOther, 'commit', '-q', '-m', 'work from another session'), git(lOther, 'push', '-q', 'origin', 'main')
+writeL({ 'later.js': '// later\n' }, 'upstream moves on')
+r = xtend(learn, ['status'], dead)
+assert.equal(r.status, 2)
+assert.match(r.stdout, /^origin    origin's main has 1 commit this checkout does not have\. Bring them in with `git pull --no-rebase origin main`, and run your checks again after/m, 'status says when origin has moved on')
+assert.deepEqual(JSON.parse(xtend(learn, ['status', '--json'], dead).stdout).origin, { branch: 'main', commits: 1 })
+assert.equal(JSON.parse(xtend(learn, ['status', '--json', '--no-fetch'], dead).stdout).origin, null, 'which --no-fetch does not ask')
+
+// Finishing: the check is fixed, the page people read gets this copy's name, and the decisions go in the merge commit's body.
+mineL({ 'check.js': 'process.exit(0)\n', 'about.js': "console.log('About My Code')\n// Acme Code keeps this\n" })
+assert.match(xtend(learn, ['sync', '--continue', '-m'], dead).stderr, /usage: xtend sync/)
+assert.match(xtend(learn, ['sync', '--prompt', '-m', 'x'], dead).stderr, /usage: xtend sync/)
+r = xtend(learn, ['sync', '--continue', '-m', 'Kept the progress and migrate handlers.\n\nThe about page says My Code.'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /1 new line still says "Acme Code", which this copy calls "My Code", in 1 file: about\.js\./, 'the news counts what still uses the old name')
+assert.match(r.stdout, /origin's main has 1 commit this checkout does not have/, 'a sync finished on a stale base says so')
+assert.match(r.stdout, /the copy from before this sync is still at .*learn-before\. Remove it with `xtend before --done`\./)
+const [lSubject, ...lBody] = git(learn, 'log', '-1', '--format=%B').split('\n')
+assert.ok(mergedSha.startsWith(lSubject.match(/^xtend: sync upstream\/main \(([0-9a-f]+)\)$/)[1]), 'the subject names the commit that was merged, not where upstream has got to since')
+assert.equal(lBody.join('\n').trim(), 'Kept the progress and migrate handlers.\n\nThe about page says My Code.')
+assert.equal(git(lOrigin, 'rev-parse', 'merge-work'), git(learn, 'rev-parse', 'HEAD'), 'the side branch is pushed')
+assert.deepEqual(JSON.parse(xtend(learn, ['names', '--json'], dead).stdout), [{ name: 'Acme Code', to: 'My Code', file: 'about.js', line: 2, text: '// Acme Code keeps this' }])
+assert.match(xtend(learn, ['status', '--no-fetch'], dead).stdout, /^last sync .*1 new line still says "Acme Code"/m)
+
+// After the sync the copy from before is still the one to compare with, until it is removed. --at looks at any other commit.
+r = xtend(learn, ['before', 'node check.js'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.doesNotMatch(r.stdout, /checked out/)
+r = xtend(learn, ['before', '--at', 'upstream/main', 'node check.js'], dead)
+assert.equal(r.status, 1, r.stderr + r.stdout)
+assert.match(r.stdout, /checked out [0-9a-f]{10} in .*learn-before\n[\s\S]*and failed \(exit 1\)/, 'upstream\'s own check fails at its newest commit')
+assert.ok(fs.existsSync(path.join(beforeDir, 'later.js')))
+assert.match(xtend(learn, ['before', '--at', 'nowhere', 'node check.js'], dead).stderr, /nowhere is not a commit here/)
+assert.match(xtend(learn, ['before', '--done'], dead).stdout, /removed the copy from before the sync/)
+assert.ok(!fs.existsSync(beforeDir))
+assert.match(xtend(learn, ['before', '--done'], dead).stdout, /there is no copy from before a sync to remove/)
+assert.equal(git(learn, 'worktree', 'list').split('\n').length, 1)
+
+// A shallow clone that stops inside the copy's own commits: status says so instead of counting every file as changed, and sync says why it cannot merge.
+const lShallow = path.join(root, 'lshallow')
+git(root, 'clone', '-q', '--depth', '1', '--branch', 'merge-work', `file://${lOrigin}`, lShallow)
+git(lShallow, 'remote', 'add', 'upstream', lUp)
+r = xtend(lShallow, ['status'], dead)
+assert.equal(r.status, 0, r.stderr + r.stdout)
+assert.match(r.stdout, /^yours     none of upstream's files changed$/m)
+assert.match(r.stdout, /^note      this clone is shallow and stops short of where this copy left upstream, so "of its own" and "yours" count only what is here\. Fetch the rest of its history first: `git fetch --unshallow origin`/m)
+r = xtend(lShallow, ['sync'], dead)
+assert.equal(r.status, 1)
+assert.match(r.stderr, /this clone is shallow and stops short of where this copy left upstream, so there is nothing to merge from\./)
+git(lShallow, 'fetch', '-q', '--unshallow', 'origin')
+assert.doesNotMatch(xtend(lShallow, ['status', '--no-fetch'], dead).stdout, /shallow/, 'with its history fetched the note goes')
 
 fs.rmSync(root, { recursive: true, force: true })
 console.log('e2e ok')
